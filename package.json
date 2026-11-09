@@ -1,0 +1,18 @@
+{
+  "name": "canvas-board",
+  "private": true,
+  "engines": {
+    "node": ">=26"
+  },
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @canvas-board/api\" \"npm run dev -w @canvas-board/web\"",
+    "dev:api": "npm run dev -w @canvas-board/api",
+    "dev:web": "npm run dev -w @canvas-board/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
