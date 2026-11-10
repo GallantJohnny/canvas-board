@@ -1,21 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Board } from './Board'
-import type { Board as BoardData } from './types'
+import type { BoardSnapshot } from './types'
+import { savedName } from './useBoardSync'
 
 export function App() {
-  const [board, setBoard] = useState<BoardData | null>(null)
+  const [board, setBoard] = useState<BoardSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [attempt, setAttempt] = useState(0)
+  const [name, setName] = useState<string | null>(() => savedName())
 
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
     setError(null)
     fetch('/api/board', { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Board request failed (${response.status})`)
-        return response.json() as Promise<BoardData>
+      .then(async (response) => {
+        if (!response.ok) {
+          const body: unknown = await response.json().catch(() => null)
+          const detail =
+            typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+              ? body.error
+              : `Board request failed (${response.status})`
+          throw new Error(detail)
+        }
+        return response.json() as Promise<BoardSnapshot>
       })
       .then((data) => {
         setBoard(data)
@@ -52,5 +61,40 @@ export function App() {
     )
   }
 
-  return <Board initial={board} />
+  if (!name) return <NamePrompt onJoin={setName} />
+
+  return <Board initial={board} name={name} />
+}
+
+function NamePrompt({ onJoin }: { onJoin: (name: string) => void }) {
+  const [draft, setDraft] = useState('')
+  const trimmed = draft.trim()
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!trimmed) return
+    onJoin(trimmed.slice(0, 24))
+  }
+
+  return (
+    <div className="status">
+      <form className="status-card name-prompt" onSubmit={submit}>
+        <h1>Join the board</h1>
+        <p>Enter your name so other people can see who is here.</p>
+        <label htmlFor="board-name">Name</label>
+        <input
+          id="board-name"
+          name="name"
+          autoFocus
+          maxLength={24}
+          autoComplete="nickname"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <button type="submit" disabled={!trimmed}>
+          Enter
+        </button>
+      </form>
+    </div>
+  )
 }

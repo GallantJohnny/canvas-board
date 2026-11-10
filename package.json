@@ -1,6 +1,7 @@
 {
   "name": "canvas-board",
   "private": true,
+  "type": "module",
   "engines": {
     "node": ">=26"
   },
@@ -11,6 +12,11 @@
     "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @canvas-board/api\" \"npm run dev -w @canvas-board/web\"",
     "dev:api": "npm run dev -w @canvas-board/api",
     "dev:web": "npm run dev -w @canvas-board/web"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.41.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

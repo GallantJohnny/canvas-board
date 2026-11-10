@@ -1,31 +1,15 @@
-import cors from 'cors'
-import express from 'express'
-import { getBoard, parseBoard, setBoard } from './boardStore.js'
+import http from 'node:http'
+import { createApp } from './app.js'
+import { attachLive } from './live.js'
+import { loadLocalEnv } from './loadEnv.js'
 
-const app = express()
+loadLocalEnv()
+
 const port = 3001
+const server = http.createServer(createApp())
+attachLive(server)
 
-app.use(cors())
-app.use(express.json())
-
-app.get('/api/board', (_req, res) => {
-  res.json(getBoard())
-})
-
-// Ready for a later save step. The board UI does not call this yet.
-app.put('/api/board', (req, res) => {
-  const next = parseBoard(req.body)
-  if (!next) {
-    res.status(400).json({
-      error: 'Expected { nodes: [{ id, x, y, html }], edges: [{ id, from, to }] }',
-    })
-    return
-  }
-  setBoard(next)
-  res.json(getBoard())
-})
-
-const server = app.listen(port, () => {
+server.listen(port, () => {
   console.log(`API listening on http://localhost:${port}`)
 })
 
