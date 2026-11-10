@@ -1,18 +1,146 @@
+import { fanout } from './liveBus.js'
+import { applyOp, parseOp } from './ops.js'
+import { getRedis } from './redis.js'
 import { createSeed } from './seed.js'
-import type { Board, BoardEdge, BoardNode } from './types.js'
+import type { Board, BoardOp, BoardSnapshot, Peer } from './types.js'
 
-let board: Board = structuredClone(createSeed())
+const SNAPSHOT = 'board:snapshot'
+const OPS = 'board:ops'
+const LOCK = 'board:lock'
+const PRESENCE_IDS = 'presence:ids'
+const PRESENCE_TTL_SECONDS = 45
 
-export function getBoard(): Board {
-  return structuredClone(board)
-}
-
-export function setBoard(next: Board): void {
-  board = structuredClone(next)
-}
+export { parseOp }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function parseSnapshot(value: unknown): BoardSnapshot | null {
+  const board = parseBoard(value)
+  if (!board || !isRecord(value)) return null
+  const { revision } = value
+  if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) return null
+  return { revision, nodes: board.nodes, edges: board.edges }
+}
+
+function presenceKey(clientId: string) {
+  return `presence:${clientId}`
+}
+
+function parsePeer(value: unknown): Peer | null {
+  if (!isRecord(value)) return null
+  const { clientId, name, color, cursor } = value
+  if (typeof clientId !== 'string' || typeof name !== 'string' || typeof color !== 'string') return null
+  if (cursor === null) return { clientId, name, color, cursor: null }
+  if (!isRecord(cursor) || typeof cursor.x !== 'number' || typeof cursor.y !== 'number') return null
+  if (!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)) return null
+  return { clientId, name, color, cursor: { x: cursor.x, y: cursor.y } }
+}
+
+async function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  const redis = getRedis()
+  const token = crypto.randomUUID()
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const acquired = await redis.set(LOCK, token, { nx: true, px: 3000 })
+    if (acquired) {
+      try {
+        return await fn()
+      } finally {
+        const current = await redis.get<string>(LOCK)
+        if (current === token) await redis.del(LOCK)
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40))
+  }
+  throw new Error('Board is busy')
+}
+
+async function loadSnapshot(): Promise<BoardSnapshot | null> {
+  return parseSnapshot(await getRedis().get<unknown>(SNAPSHOT))
+}
+
+async function ensureSnapshot(): Promise<BoardSnapshot> {
+  const existing = await loadSnapshot()
+  if (existing) return existing
+  const seeded: BoardSnapshot = { revision: 0, ...createSeed() }
+  await getRedis().set(SNAPSHOT, seeded)
+  return seeded
+}
+
+export async function getSnapshot(): Promise<BoardSnapshot> {
+  const existing = await loadSnapshot()
+  if (existing) return existing
+  return withLock(ensureSnapshot)
+}
+
+export async function commitOp(op: BoardOp, clientId: string, opId: string): Promise<BoardSnapshot | null> {
+  const committed = await withLock(async () => {
+    const current = await ensureSnapshot()
+    const next = applyOp(current, op)
+    if (!next) return null
+    const snapshot: BoardSnapshot = { revision: current.revision + 1, nodes: next.nodes, edges: next.edges }
+    const redis = getRedis()
+    await redis.set(SNAPSHOT, snapshot)
+    await redis.rpush(OPS, { revision: snapshot.revision, op, clientId, opId })
+    await redis.ltrim(OPS, -500, -1)
+    return { snapshot, op, clientId, opId }
+  })
+  if (!committed) return null
+  await fanout({
+    kind: 'op',
+    revision: committed.snapshot.revision,
+    op: committed.op,
+    clientId: committed.clientId,
+    opId: committed.opId,
+  })
+  return committed.snapshot
+}
+
+export async function replaceBoard(next: Board): Promise<BoardSnapshot> {
+  const snapshot = await withLock(async () => {
+    const current = await ensureSnapshot()
+    const stored: BoardSnapshot = { revision: current.revision + 1, nodes: next.nodes, edges: next.edges }
+    await getRedis().set(SNAPSHOT, stored)
+    return stored
+  })
+  await fanout({ kind: 'snapshot', revision: snapshot.revision, nodes: snapshot.nodes, edges: snapshot.edges })
+  return snapshot
+}
+
+export async function touchPresence(peer: Peer): Promise<void> {
+  const redis = getRedis()
+  await Promise.all([
+    redis.set(presenceKey(peer.clientId), peer, { ex: PRESENCE_TTL_SECONDS }),
+    redis.sadd(PRESENCE_IDS, peer.clientId),
+  ])
+}
+
+export async function dropPresence(clientId: string): Promise<void> {
+  const redis = getRedis()
+  await Promise.all([redis.del(presenceKey(clientId)), redis.srem(PRESENCE_IDS, clientId)])
+}
+
+export async function listPeers(): Promise<Peer[]> {
+  const redis = getRedis()
+  const ids = await redis.smembers(PRESENCE_IDS)
+  if (ids.length === 0) return []
+  const values = await redis.mget<(Peer | null)[]>(...ids.map(presenceKey))
+  const peers: Peer[] = []
+  const stale: string[] = []
+  ids.forEach((id, index) => {
+    const peer = parsePeer(values[index])
+    if (!peer) stale.push(id)
+    else peers.push(peer)
+  })
+  if (stale.length > 0) await redis.srem(PRESENCE_IDS, ...stale)
+  return peers
+}
+
+export async function announcePeers(): Promise<Peer[]> {
+  const peers = await listPeers()
+  await fanout({ kind: 'peers', peers })
+  return peers
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -22,7 +150,7 @@ function isFiniteNumber(value: unknown): value is number {
 export function parseBoard(value: unknown): Board | null {
   if (!isRecord(value) || !Array.isArray(value.nodes) || !Array.isArray(value.edges)) return null
 
-  const nodes: BoardNode[] = []
+  const nodes: Board['nodes'] = []
   const ids = new Set<string>()
   for (const item of value.nodes) {
     if (!isRecord(item)) return null
@@ -35,7 +163,7 @@ export function parseBoard(value: unknown): Board | null {
     nodes.push({ id, x, y, html })
   }
 
-  const edges: BoardEdge[] = []
+  const edges: Board['edges'] = []
   const edgeIds = new Set<string>()
   const pairs = new Set<string>()
   for (const item of value.edges) {

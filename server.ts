@@ -1,8 +1,13 @@
 import { existsSync } from 'node:fs'
+import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { createApp } from './apps/api/src/app.js'
+import { attachLive } from './apps/api/src/live.js'
+import { loadLocalEnv } from './apps/api/src/loadEnv.js'
+
+loadLocalEnv()
 
 const app = createApp()
 const webRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), 'apps', 'web', 'dist')
@@ -28,4 +33,7 @@ if (typeof express !== 'function') {
   throw new Error('Express did not load')
 }
 
-export default app
+const server = http.createServer(app)
+attachLive(server)
+
+export default server

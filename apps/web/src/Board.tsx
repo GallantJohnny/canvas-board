@@ -3,7 +3,8 @@ import { Edges } from './Edges'
 import { anchor } from './geometry'
 import { HtmlEditor } from './HtmlEditor'
 import { NodeCard } from './NodeCard'
-import type { Board as BoardData, BoardEdge, BoardNode, DraftLink, Size } from './types'
+import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
+import { useBoardSync } from './useBoardSync'
 
 const CARD_WIDTH = 280
 const STAGGER = 24
@@ -32,15 +33,17 @@ type Gesture =
     }
   | { kind: 'connect'; pointerId: number; fromId: string }
 
-export function Board({ initial }: { initial: BoardData }) {
+export function Board({ initial, name }: { initial: BoardSnapshot; name: string }) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const panRef = useRef<Pan>({ x: 0, y: 0 })
   const placeStep = useRef(0)
   const centerToken = useRef(0)
   const followStep = useRef<Record<string, number>>({})
-  const [nodes, setNodes] = useState<BoardNode[]>(initial.nodes)
-  const [edges, setEdges] = useState<BoardEdge[]>(initial.edges)
+  const sync = useBoardSync(initial, name)
+  const syncRef = useRef(sync)
+  syncRef.current = sync
+  const { nodes, edges, peers, me, status } = sync
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 })
   const [sizes, setSizes] = useState<Record<string, Size>>({})
   const [draft, setDraft] = useState<DraftLink | null>(null)
@@ -65,6 +68,14 @@ export function Board({ initial }: { initial: BoardData }) {
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
+      const rect = viewportRef.current?.getBoundingClientRect()
+      const inside =
+        rect !== undefined &&
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      syncRef.current.noteCursor(inside ? toBoardRef.current(event.clientX, event.clientY) : null)
       const current = gesture.current
       if (!current || event.pointerId !== current.pointerId) return
       if (current.kind === 'pan') {
@@ -75,12 +86,10 @@ export function Board({ initial }: { initial: BoardData }) {
         return
       }
       if (current.kind === 'drag') {
-        const dx = event.clientX - current.startClientX
-        const dy = event.clientY - current.startClientY
-        setNodes((prev) =>
-          prev.map((node) =>
-            node.id === current.id ? { ...node, x: current.originX + dx, y: current.originY + dy } : node,
-          ),
+        syncRef.current.previewMove(
+          current.id,
+          current.originX + event.clientX - current.startClientX,
+          current.originY + event.clientY - current.startClientY,
         )
         return
       }
@@ -93,15 +102,20 @@ export function Board({ initial }: { initial: BoardData }) {
       if (!current || event.pointerId !== current.pointerId) return
       gesture.current = null
       setPanning(false)
+      if (current.kind === 'drag') {
+        syncRef.current.commitMove(
+          current.id,
+          current.originX + event.clientX - current.startClientX,
+          current.originY + event.clientY - current.startClientY,
+        )
+        return
+      }
       if (current.kind !== 'connect') return
       const hit = document.elementFromPoint(event.clientX, event.clientY)
       const toId = hit?.closest('[data-node-id]')?.getAttribute('data-node-id')
       setDraft(null)
       if (!toId || toId === current.fromId) return
-      setEdges((prev) => {
-        if (prev.some((edge) => edge.from === current.fromId && edge.to === toId)) return prev
-        return [...prev, { id: `e-${crypto.randomUUID()}`, from: current.fromId, to: toId }]
-      })
+      syncRef.current.addEdge({ id: `e-${crypto.randomUUID()}`, from: current.fromId, to: toId })
     }
 
     window.addEventListener('pointermove', move)
@@ -149,6 +163,7 @@ export function Board({ initial }: { initial: BoardData }) {
     event.preventDefault()
     const node = nodes.find((item) => item.id === id)
     if (!node) return
+    sync.setDragged(id)
     gesture.current = {
       kind: 'drag',
       pointerId: event.pointerId,
@@ -173,7 +188,7 @@ export function Board({ initial }: { initial: BoardData }) {
   }
 
   function removeEdge(id: string) {
-    setEdges((prev) => prev.filter((edge) => edge.id !== id))
+    sync.removeEdge(id)
   }
 
   function addCard() {
@@ -190,7 +205,7 @@ export function Board({ initial }: { initial: BoardData }) {
     placeStep.current += 1
     const x = rect.width / 2 - panRef.current.x - CARD_WIDTH / 2 + step
     const y = rect.height / 2 - panRef.current.y + step
-    setNodes((prev) => [...prev, { id: `n-${crypto.randomUUID()}`, x, y, html }])
+    sync.addNode({ id: `n-${crypto.randomUUID()}`, x, y, html })
     setMarkup('')
     setMarkupError(null)
   }
@@ -238,14 +253,18 @@ export function Board({ initial }: { initial: BoardData }) {
       })
       if (t < 1) requestAnimationFrame(step)
     }
+    const active = gesture.current
+    if (active?.kind === 'drag') {
+      const dragged = nodes.find((item) => item.id === active.id)
+      if (dragged) sync.commitMove(dragged.id, dragged.x, dragged.y)
+    }
     gesture.current = null
     setPanning(false)
     requestAnimationFrame(step)
   }
 
   function removeNode(id: string) {
-    setNodes((prev) => prev.filter((node) => node.id !== id))
-    setEdges((prev) => prev.filter((edge) => edge.from !== id && edge.to !== id))
+    sync.removeNode(id)
     setSizes((prev) => {
       if (!(id in prev)) return prev
       const next = { ...prev }
@@ -254,6 +273,23 @@ export function Board({ initial }: { initial: BoardData }) {
     })
   }
 
+  useEffect(() => {
+    setSizes((prev) => {
+      const ids = new Set(nodes.map((node) => node.id))
+      let changed = false
+      const next: Record<string, Size> = {}
+      for (const [id, size] of Object.entries(prev)) {
+        if (ids.has(id)) next[id] = size
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [nodes])
+
+  const people: Peer[] = peers.some((peer) => peer.clientId === me.clientId)
+    ? peers
+    : [{ clientId: me.clientId, name: me.name, color: me.color, cursor: null }, ...peers]
+  const statusLabel = status === 'live' ? 'Live' : status === 'connecting' ? 'Connecting' : 'Reconnecting'
   const className = panning ? 'viewport is-panning' : draft ? 'viewport is-connecting' : 'viewport'
 
   return (
@@ -307,6 +343,7 @@ export function Board({ initial }: { initial: BoardData }) {
         className={className}
         style={{ backgroundPosition: `${pan.x}px ${pan.y}px` }}
         onPointerDown={onBackgroundPointerDown}
+        onPointerLeave={() => sync.noteCursor(null)}
       >
         <div className="world" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
           <Edges nodes={nodes} edges={edges} sizes={sizes} draft={draft} onRemove={removeEdge} />
@@ -324,13 +361,42 @@ export function Board({ initial }: { initial: BoardData }) {
               onRemove={removeNode}
             />
           ))}
+          {peers.map((peer) =>
+            peer.clientId === me.clientId || !peer.cursor ? null : (
+              <div
+                key={peer.clientId}
+                className="remote-cursor"
+                style={{ transform: `translate(${peer.cursor.x}px, ${peer.cursor.y}px)` }}
+                aria-hidden="true"
+              >
+                <span className="remote-cursor-mark" style={{ background: peer.color }} />
+                <span className="remote-cursor-name" style={{ background: peer.color }}>
+                  {peer.name}
+                </span>
+              </div>
+            ),
+          )}
+        </div>
+        <div className="roster" data-chrome>
+          <p className="roster-status">
+            <span className={`roster-dot ${status}`} />
+            {statusLabel}
+          </p>
+          <ul aria-label="People on this board">
+            {people.map((peer) => (
+              <li key={peer.clientId}>
+                <span className="roster-swatch" style={{ background: peer.color }} />
+                {peer.clientId === me.clientId ? `${peer.name} (you)` : peer.name}
+              </li>
+            ))}
+          </ul>
         </div>
         {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
               Write HTML in the panel to add a card. Use the card control to remove one, the center control to bring
               it into view, and the arrows to follow a connected card. Drag a handle to move, a port to connect, a
-              line to remove it, and empty space to pan. Changes stay in this tab.
+              line to remove it, and empty space to pan. Moves and edits are shared. Panning stays on this screen.
             </p>
             <button type="button" className="hint-dismiss" aria-label="Dismiss note" onClick={() => setHintOpen(false)}>
               <span aria-hidden="true">×</span>
