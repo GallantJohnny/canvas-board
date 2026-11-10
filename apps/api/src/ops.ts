@@ -1,6 +1,13 @@
 import type { Board, BoardEdge, BoardNode, BoardOp } from './types.js'
 
 const MAX_TEXT = 100_000
+const MIN_CARD_WIDTH = 180
+const MAX_CARD_WIDTH = 720
+
+export function normalizeCardWidth(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.round(Math.min(MAX_CARD_WIDTH, Math.max(MIN_CARD_WIDTH, value)))
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -19,7 +26,9 @@ function parseNode(value: unknown): BoardNode | null {
   const { id, x, y, html } = value
   if (!isId(id) || !isFiniteNumber(x) || !isFiniteNumber(y)) return null
   if (typeof html !== 'string' || html.length > MAX_TEXT) return null
-  return { id, x, y, html }
+  if (value.width !== undefined && normalizeCardWidth(value.width) === undefined) return null
+  const width = normalizeCardWidth(value.width)
+  return width === undefined ? { id, x, y, html } : { id, x, y, html, width }
 }
 
 function parseEdge(value: unknown): BoardEdge | null {
@@ -38,6 +47,11 @@ export function parseOp(value: unknown): BoardOp | null {
   if (value.type === 'node.move') {
     if (!isId(value.id) || !isFiniteNumber(value.x) || !isFiniteNumber(value.y)) return null
     return { type: 'node.move', id: value.id, x: value.x, y: value.y }
+  }
+  if (value.type === 'node.resize') {
+    const width = normalizeCardWidth(value.width)
+    if (!isId(value.id) || width === undefined) return null
+    return { type: 'node.resize', id: value.id, width }
   }
   if (value.type === 'node.edit') {
     if (!isId(value.id) || typeof value.html !== 'string' || value.html.length > MAX_TEXT) return null
@@ -68,6 +82,14 @@ export function applyOp(board: Board, op: BoardOp): Board | null {
     if (!board.nodes.some((node) => node.id === op.id)) return null
     return {
       nodes: board.nodes.map((node) => (node.id === op.id ? { ...node, x: op.x, y: op.y } : node)),
+      edges: board.edges,
+    }
+  }
+
+  if (op.type === 'node.resize') {
+    if (!board.nodes.some((node) => node.id === op.id)) return null
+    return {
+      nodes: board.nodes.map((node) => (node.id === op.id ? { ...node, width: op.width } : node)),
       edges: board.edges,
     }
   }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { CARD_WIDTH } from './geometry'
 import { applyOp } from './ops'
 import type { Board, BoardEdge, BoardNode, BoardOp, BoardSnapshot, Peer } from './types'
 
@@ -22,6 +23,12 @@ type InflightMove = {
   opId: string
   x: number
   y: number
+}
+
+type HeldResize = {
+  id: string
+  width: number
+  origin: number | undefined
 }
 
 export type LiveStatus = 'live' | 'connecting' | 'offline'
@@ -94,6 +101,7 @@ function asOp(value: unknown): BoardOp | null {
   const op = value as BoardOp
   if (op.type === 'node.add' && op.node) return op
   if (op.type === 'node.move' && typeof op.id === 'string') return op
+  if (op.type === 'node.resize' && typeof op.id === 'string' && typeof op.width === 'number' && Number.isFinite(op.width)) return op
   if (op.type === 'node.edit' && typeof op.id === 'string' && typeof op.html === 'string') return op
   if (op.type === 'node.remove' && typeof op.id === 'string') return op
   if (op.type === 'edge.add' && op.edge) return op
@@ -115,6 +123,7 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
   const revision = useRef(initial.revision)
   const dragging = useRef<string | null>(null)
   const held = useRef<HeldMove | null>(null)
+  const resizing = useRef<HeldResize | null>(null)
   const inflight = useRef<InflightMove | null>(null)
   const pending = useRef(new Set<string>())
   const socketRef = useRef<WebSocket | null>(null)
@@ -124,18 +133,31 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
   if (!meRef.current) meRef.current = identityFor(name)
   const me = meRef.current
 
-  function placeHeld(board: Board): Board {
-    const move = held.current
-    if (!move) return board
-    if (!board.nodes.some((node) => node.id === move.id)) {
-      held.current = null
-      if (inflight.current?.id === move.id) inflight.current = null
+  function applyLocalWidth(board: Board): Board {
+    const resize = resizing.current
+    if (!resize) return board
+    if (!board.nodes.some((node) => node.id === resize.id)) {
+      resizing.current = null
       return board
     }
     return {
-      nodes: board.nodes.map((node) => (node.id === move.id ? { ...node, x: move.x, y: move.y } : node)),
+      nodes: board.nodes.map((node) => (node.id === resize.id ? { ...node, width: resize.width } : node)),
       edges: board.edges,
     }
+  }
+
+  function placeHeld(board: Board): Board {
+    const move = held.current
+    if (!move) return applyLocalWidth(board)
+    if (!board.nodes.some((node) => node.id === move.id)) {
+      held.current = null
+      if (inflight.current?.id === move.id) inflight.current = null
+      return applyLocalWidth(board)
+    }
+    return applyLocalWidth({
+      nodes: board.nodes.map((node) => (node.id === move.id ? { ...node, x: move.x, y: move.y } : node)),
+      edges: board.edges,
+    })
   }
 
   function setBoard(next: Board) {
@@ -272,7 +294,7 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
         return
       }
       const move = held.current
-      const shown =
+      const moved =
         move && next.nodes.some((node) => node.id === move.id)
           ? {
               nodes: next.nodes.map((node) => (node.id === move.id ? { ...node, x: move.x, y: move.y } : node)),
@@ -280,6 +302,15 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
             }
           : next
       if (move && !next.nodes.some((node) => node.id === move.id)) held.current = null
+      const resize = resizing.current
+      const shown =
+        resize && moved.nodes.some((node) => node.id === resize.id)
+          ? {
+              nodes: moved.nodes.map((node) => (node.id === resize.id ? { ...node, width: resize.width } : node)),
+              edges: moved.edges,
+            }
+          : moved
+      if (resize && !moved.nodes.some((node) => node.id === resize.id)) resizing.current = null
       boardRef.current = shown
       setNodes(shown.nodes)
       setEdges(shown.edges)
@@ -380,6 +411,7 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
       if (dragging.current === id) dragging.current = null
       if (held.current?.id === id) held.current = null
       if (inflight.current?.id === id) inflight.current = null
+      if (resizing.current?.id === id) resizing.current = null
       mutate({ type: 'node.remove', id })
     },
     addEdge(edge: BoardEdge) {
@@ -394,6 +426,24 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
       held.current = { id, x, y, released: false, confirmOpId: null, confirmRevision: null }
       setBoard(next)
       sendHeldMove(false)
+    },
+    previewResize(id: string, width: number) {
+      const node = boardRef.current.nodes.find((item) => item.id === id)
+      if (!node) return
+      const origin = resizing.current?.id === id ? resizing.current.origin : node.width
+      resizing.current = { id, width, origin }
+      const next = applyOp(boardRef.current, { type: 'node.resize', id, width })
+      if (!next) return
+      setBoard(next)
+    },
+    commitResize(id: string, width: number) {
+      const heldResize = resizing.current
+      resizing.current = null
+      const node = boardRef.current.nodes.find((item) => item.id === id)
+      if (!node) return
+      const origin = heldResize?.id === id ? heldResize.origin : node.width
+      if (origin === width || (origin === undefined && width === CARD_WIDTH)) return
+      mutate({ type: 'node.resize', id, width })
     },
     commitMove(id: string, x: number, y: number) {
       dragging.current = null

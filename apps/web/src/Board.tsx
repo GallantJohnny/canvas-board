@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Edges } from './Edges'
-import { anchor } from './geometry'
+import { anchor, CARD_WIDTH, clampCardWidth } from './geometry'
 import { HtmlEditor } from './HtmlEditor'
 import { NodeCard } from './NodeCard'
 import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
 
-const CARD_WIDTH = 280
 const STAGGER = 24
 const TAG_ERROR = 'The card has to be defined with HTML tags.'
 const MIN_ZOOM = 0.25
@@ -37,6 +36,7 @@ type Gesture =
       originY: number
     }
   | { kind: 'connect'; pointerId: number; fromId: string }
+  | { kind: 'resize'; pointerId: number; id: string; startClientX: number; originWidth: number }
 
 export function Board({ initial, name }: { initial: BoardSnapshot; name: string }) {
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -55,6 +55,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   const [sizes, setSizes] = useState<Record<string, Size>>({})
   const [draft, setDraft] = useState<DraftLink | null>(null)
   const [panning, setPanning] = useState(false)
+  const [resizing, setResizing] = useState(false)
   const [markup, setMarkup] = useState('')
   const [markupError, setMarkupError] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -104,6 +105,14 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         )
         return
       }
+      if (current.kind === 'resize') {
+        const scale = zoomRef.current || 1
+        syncRef.current.previewResize(
+          current.id,
+          clampCardWidth(current.originWidth + (event.clientX - current.startClientX) / scale),
+        )
+        return
+      }
       const point = toBoardRef.current(event.clientX, event.clientY)
       setDraft({ fromId: current.fromId, x: point.x, y: point.y })
     }
@@ -113,12 +122,21 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       if (!current || event.pointerId !== current.pointerId) return
       gesture.current = null
       setPanning(false)
+      setResizing(false)
       if (current.kind === 'drag') {
         const scale = zoomRef.current || 1
         syncRef.current.commitMove(
           current.id,
           current.originX + (event.clientX - current.startClientX) / scale,
           current.originY + (event.clientY - current.startClientY) / scale,
+        )
+        return
+      }
+      if (current.kind === 'resize') {
+        const scale = zoomRef.current || 1
+        syncRef.current.commitResize(
+          current.id,
+          clampCardWidth(current.originWidth + (event.clientX - current.startClientX) / scale),
         )
         return
       }
@@ -185,6 +203,32 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       originX: node.x,
       originY: node.y,
     }
+  }
+
+  function onResizeStart(id: string, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return
+    cancelCenter()
+    event.stopPropagation()
+    event.preventDefault()
+    const node = nodes.find((item) => item.id === id)
+    if (!node) return
+    gesture.current = {
+      kind: 'resize',
+      pointerId: event.pointerId,
+      id,
+      startClientX: event.clientX,
+      originWidth: node.width ?? CARD_WIDTH,
+    }
+    setResizing(true)
+  }
+
+  function onResizeKey(id: string, event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const node = nodes.find((item) => item.id === id)
+    if (!node) return
+    const delta = event.key === 'ArrowRight' ? 16 : -16
+    sync.commitResize(id, clampCardWidth((node.width ?? CARD_WIDTH) + delta))
   }
 
   function onConnectStart(id: string, event: ReactPointerEvent<HTMLButtonElement>) {
@@ -294,8 +338,13 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       const dragged = nodes.find((item) => item.id === active.id)
       if (dragged) sync.commitMove(dragged.id, dragged.x, dragged.y)
     }
+    if (active?.kind === 'resize') {
+      const resized = nodes.find((item) => item.id === active.id)
+      sync.commitResize(active.id, resized?.width ?? active.originWidth)
+    }
     gesture.current = null
     setPanning(false)
+    setResizing(false)
     requestAnimationFrame(step)
   }
 
@@ -348,7 +397,13 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     ? peers
     : [{ clientId: me.clientId, name: me.name, color: me.color, cursor: null }, ...peers]
   const statusLabel = status === 'live' ? 'Live' : status === 'connecting' ? 'Connecting' : 'Reconnecting'
-  const className = panning ? 'viewport is-panning' : draft ? 'viewport is-connecting' : 'viewport'
+  const className = panning
+    ? 'viewport is-panning'
+    : resizing
+      ? 'viewport is-resizing'
+      : draft
+        ? 'viewport is-connecting'
+        : 'viewport'
 
   return (
     <div className="app-shell">
@@ -420,6 +475,8 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
               key={node.id}
               node={node}
               onResize={onResize}
+              onResizeStart={onResizeStart}
+              onResizeKey={onResizeKey}
               onDragStart={onDragStart}
               onConnectStart={onConnectStart}
               onCenter={centerNode}
@@ -474,9 +531,9 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
           <div className="hint" data-chrome>
             <p>
               Write HTML in the panel to add a card. Use the card control to remove one, the center control to bring
-              it into view, and the arrows to follow a connected card. Drag a handle to move, a port to connect, a
-              line to remove it, and empty space to pan. Use the pencil to edit a card in the side panel, and + and − to
-              zoom. Moves and edits are shared. Panning and zoom stay on this screen.
+              it into view, and the arrows to follow a connected card. Drag a handle to move, the right edge to resize,
+              a port to connect, a line to remove it, and empty space to pan. Use the pencil to edit a card in the side
+              panel, and + and − to zoom. Moves, resizes, and edits are shared. Panning and zoom stay on this screen.
             </p>
             <button type="button" className="hint-dismiss" aria-label="Dismiss note" onClick={() => setHintOpen(false)}>
               <span aria-hidden="true">×</span>

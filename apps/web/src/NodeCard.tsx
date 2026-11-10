@@ -1,9 +1,12 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { CARD_WIDTH } from './geometry'
 import type { BoardNode, Size } from './types'
 
 type Props = {
   node: BoardNode
   onResize: (id: string, size: Size) => void
+  onResizeStart: (id: string, event: ReactPointerEvent<HTMLButtonElement>) => void
+  onResizeKey: (id: string, event: ReactKeyboardEvent<HTMLButtonElement>) => void
   onDragStart: (id: string, event: ReactPointerEvent<HTMLElement>) => void
   onConnectStart: (id: string, event: ReactPointerEvent<HTMLButtonElement>) => void
   onCenter: (id: string) => void
@@ -18,6 +21,8 @@ type Props = {
 export function NodeCard({
   node,
   onResize,
+  onResizeStart,
+  onResizeKey,
   onDragStart,
   onConnectStart,
   onCenter,
@@ -47,7 +52,7 @@ export function NodeCard({
       ref={ref}
       className={editing ? 'node is-editing' : 'node'}
       data-node-id={node.id}
-      style={{ left: node.x, top: node.y }}
+      style={{ left: node.x, top: node.y, width: node.width ?? CARD_WIDTH }}
     >
       <div className="node-bar">
         <button
@@ -130,6 +135,13 @@ export function NodeCard({
       </div>
       <div className="node-body" dangerouslySetInnerHTML={{ __html: node.html }} />
       <span className="inlet" aria-hidden="true" />
+      <button
+        type="button"
+        className="node-resize"
+        aria-label={`Resize ${node.id}`}
+        onPointerDown={(event) => onResizeStart(node.id, event)}
+        onKeyDown={(event) => onResizeKey(node.id, event)}
+      />
       <button
         type="button"
         className="port"
