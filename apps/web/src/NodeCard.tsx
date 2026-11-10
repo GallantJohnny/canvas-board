@@ -6,9 +6,24 @@ type Props = {
   onResize: (id: string, size: Size) => void
   onDragStart: (id: string, event: ReactPointerEvent<HTMLElement>) => void
   onConnectStart: (id: string, event: ReactPointerEvent<HTMLButtonElement>) => void
+  onCenter: (id: string) => void
+  onFollow: (id: string, direction: 'in' | 'out') => void
+  canFollowIn: boolean
+  canFollowOut: boolean
+  onRemove: (id: string) => void
 }
 
-export function NodeCard({ node, onResize, onDragStart, onConnectStart }: Props) {
+export function NodeCard({
+  node,
+  onResize,
+  onDragStart,
+  onConnectStart,
+  onCenter,
+  onFollow,
+  canFollowIn,
+  canFollowOut,
+  onRemove,
+}: Props) {
   const ref = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -30,15 +45,66 @@ export function NodeCard({ node, onResize, onDragStart, onConnectStart }: Props)
       data-node-id={node.id}
       style={{ left: node.x, top: node.y }}
     >
-      <button
-        type="button"
-        className="node-handle"
-        data-drag-handle
-        aria-label={`Move ${node.id}`}
-        onPointerDown={(event) => onDragStart(node.id, event)}
-      >
-        <span className="grip" aria-hidden="true" />
-      </button>
+      <div className="node-bar">
+        <button
+          type="button"
+          className="node-handle"
+          data-drag-handle
+          aria-label={`Move ${node.id}`}
+          onPointerDown={(event) => onDragStart(node.id, event)}
+        >
+          <span className="grip" aria-hidden="true" />
+        </button>
+        {canFollowIn ? (
+          <button
+            type="button"
+            className="node-follow"
+            aria-label={`Previous card connected to ${node.id}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => onFollow(node.id, 'in')}
+          >
+            <span aria-hidden="true">←</span>
+          </button>
+        ) : null}
+        {canFollowOut ? (
+          <button
+            type="button"
+            className="node-follow"
+            aria-label={`Next card connected to ${node.id}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => onFollow(node.id, 'out')}
+          >
+            <span aria-hidden="true">→</span>
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="node-center"
+          aria-label={`Center ${node.id}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => onCenter(node.id)}
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+            <path
+              d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="node-remove"
+          aria-label={`Remove ${node.id}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => onRemove(node.id)}
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
       <div className="node-body" dangerouslySetInnerHTML={{ __html: node.html }} />
       <span className="inlet" aria-hidden="true" />
       <button

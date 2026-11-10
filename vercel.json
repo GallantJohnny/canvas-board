@@ -1,0 +1,8 @@
+{
+  "buildCommand": "npm run build -w @canvas-board/web",
+  "functions": {
+    "server.ts": {
+      "includeFiles": "apps/web/dist/**"
+    }
+  }
+}
