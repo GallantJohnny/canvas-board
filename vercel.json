@@ -1,8 +1,8 @@
 {
-  "buildCommand": "npm run build -w @canvas-board/web",
+  "buildCommand": "npm run build -w @canvas-board/web && node scripts/stage-public.cjs",
   "functions": {
     "server.ts": {
-      "includeFiles": "apps/web/dist/**"
+      "includeFiles": "apps/web/dist/**/*"
     }
   }
 }

@@ -5,9 +5,24 @@ import type { Board, BoardEdge, BoardNode, BoardOp, BoardSnapshot, Peer } from '
 const PALETTE = ['#00539f', '#0b7a4b', '#9a4d0f', '#7a2f8f', '#9f2b4a', '#0e6e8f']
 const GUEST_KEY = 'canvas-board-guest'
 const NAME_LIMIT = 24
-const MOVE_INTERVAL_MS = 120
 const CURSOR_INTERVAL_MS = 100
 const HEARTBEAT_MS = 20_000
+
+type HeldMove = {
+  id: string
+  x: number
+  y: number
+  released: boolean
+  confirmOpId: string | null
+  confirmRevision: number | null
+}
+
+type InflightMove = {
+  id: string
+  opId: string
+  x: number
+  y: number
+}
 
 export type LiveStatus = 'live' | 'connecting' | 'offline'
 
@@ -79,6 +94,7 @@ function asOp(value: unknown): BoardOp | null {
   const op = value as BoardOp
   if (op.type === 'node.add' && op.node) return op
   if (op.type === 'node.move' && typeof op.id === 'string') return op
+  if (op.type === 'node.edit' && typeof op.id === 'string' && typeof op.html === 'string') return op
   if (op.type === 'node.remove' && typeof op.id === 'string') return op
   if (op.type === 'edge.add' && op.edge) return op
   if (op.type === 'edge.remove' && typeof op.id === 'string') return op
@@ -98,37 +114,107 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
   const boardRef = useRef<Board>({ nodes: initial.nodes, edges: initial.edges })
   const revision = useRef(initial.revision)
   const dragging = useRef<string | null>(null)
+  const held = useRef<HeldMove | null>(null)
+  const inflight = useRef<InflightMove | null>(null)
   const pending = useRef(new Set<string>())
   const socketRef = useRef<WebSocket | null>(null)
-  const lastMove = useRef(0)
   const lastCursor = useRef(0)
   const cursorActive = useRef(false)
   const meRef = useRef<Identity | null>(null)
   if (!meRef.current) meRef.current = identityFor(name)
   const me = meRef.current
 
+  function placeHeld(board: Board): Board {
+    const move = held.current
+    if (!move) return board
+    if (!board.nodes.some((node) => node.id === move.id)) {
+      held.current = null
+      if (inflight.current?.id === move.id) inflight.current = null
+      return board
+    }
+    return {
+      nodes: board.nodes.map((node) => (node.id === move.id ? { ...node, x: move.x, y: move.y } : node)),
+      edges: board.edges,
+    }
+  }
+
   function setBoard(next: Board) {
-    boardRef.current = next
-    setNodes(next.nodes)
-    setEdges(next.edges)
+    const shown = placeHeld(next)
+    boardRef.current = shown
+    setNodes(shown.nodes)
+    setEdges(shown.edges)
   }
 
   function takeSnapshot(snapshot: BoardSnapshot) {
+    if (snapshot.revision < revision.current) return
+    if (held.current?.confirmRevision != null && snapshot.revision >= held.current.confirmRevision) held.current = null
+    if (snapshot.revision === revision.current) return
     revision.current = snapshot.revision
-    const dragId = dragging.current
-    if (!dragId) {
-      setBoard(snapshot)
+    setBoard({ nodes: snapshot.nodes, edges: snapshot.edges })
+  }
+
+  function sendOp(op: BoardOp): string | null {
+    const opId = crypto.randomUUID()
+    pending.current.add(opId)
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      pending.current.delete(opId)
+      return null
+    }
+    socket.send(JSON.stringify({ type: 'op', opId, op }))
+    return opId
+  }
+
+  function sendHeldMove(asDrop: boolean) {
+    const move = held.current
+    if (!move || inflight.current) return
+    const opId = sendOp({ type: 'node.move', id: move.id, x: move.x, y: move.y })
+    if (!opId) return
+    inflight.current = { id: move.id, opId, x: move.x, y: move.y }
+    if (asDrop) move.confirmOpId = opId
+  }
+
+  function noteAck(opId: string, ackRevision: number) {
+    pending.current.delete(opId)
+    const flight = inflight.current
+    const wasFlight = flight?.opId === opId
+    if (wasFlight) inflight.current = null
+    const move = held.current
+    if (!move || (flight?.id !== move.id && move.confirmOpId !== opId)) return
+    if (move.confirmOpId === opId) {
+      if (ackRevision <= revision.current) held.current = null
+      else move.confirmRevision = ackRevision
       return
     }
-    const local = boardRef.current.nodes.find((node) => node.id === dragId)
-    const nodes = local
-      ? snapshot.nodes.map((node) => (node.id === dragId ? { ...node, x: local.x, y: local.y } : node))
-      : snapshot.nodes
-    setBoard({ nodes, edges: snapshot.edges })
+    if (!wasFlight || !flight) return
+    if (move.released || move.x !== flight.x || move.y !== flight.y) sendHeldMove(move.released)
+  }
+
+  function rejectMove(opId: string) {
+    pending.current.delete(opId)
+    const flight = inflight.current
+    if (flight?.opId === opId) inflight.current = null
+    const move = held.current
+    if (move && (move.confirmOpId === opId || flight?.opId === opId)) held.current = null
+  }
+
+  function resendHeld() {
+    const move = held.current
+    if (!move) return
+    inflight.current = null
+    move.confirmOpId = null
+    move.confirmRevision = null
+    sendHeldMove(move.released)
   }
 
   const takeSnapshotRef = useRef(takeSnapshot)
+  const noteAckRef = useRef(noteAck)
+  const rejectMoveRef = useRef(rejectMove)
+  const resendHeldRef = useRef(resendHeld)
   takeSnapshotRef.current = takeSnapshot
+  noteAckRef.current = noteAck
+  rejectMoveRef.current = rejectMove
+  resendHeldRef.current = resendHeld
 
   useEffect(() => {
     let stopped = false
@@ -147,7 +233,6 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
         const data: unknown = await response.json()
         if (!isSnapshot(data)) return
         takeSnapshotRef.current(data)
-        pending.current.clear()
       } catch {
         // The next welcome or op fills the gap.
       } finally {
@@ -165,29 +250,39 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
       const op = asOp(message.op)
       const opId = message.opId
       if (typeof message.revision !== 'number' || !op || typeof opId !== 'string') return
-      if (message.revision <= revision.current) {
-        pending.current.delete(opId)
+      if (pending.current.has(opId) && message.revision !== revision.current + 1) {
+        noteAckRef.current(opId, message.revision)
+        if (message.revision > revision.current) void refetch()
         return
       }
+      if (message.revision <= revision.current) return
       if (message.revision !== revision.current + 1) {
         void refetch()
         return
       }
       revision.current = message.revision
       if (pending.current.has(opId)) {
-        pending.current.delete(opId)
+        noteAckRef.current(opId, message.revision)
         return
       }
-      if (op.type === 'node.move' && dragging.current === op.id) return
       if (op.type === 'node.remove' && dragging.current === op.id) dragging.current = null
       const next = applyOp(boardRef.current, op)
       if (!next) {
         void refetch()
         return
       }
-      boardRef.current = next
-      setNodes(next.nodes)
-      setEdges(next.edges)
+      const move = held.current
+      const shown =
+        move && next.nodes.some((node) => node.id === move.id)
+          ? {
+              nodes: next.nodes.map((node) => (node.id === move.id ? { ...node, x: move.x, y: move.y } : node)),
+              edges: next.edges,
+            }
+          : next
+      if (move && !next.nodes.some((node) => node.id === move.id)) held.current = null
+      boardRef.current = shown
+      setNodes(shown.nodes)
+      setEdges(shown.edges)
     }
 
     const connect = () => {
@@ -212,8 +307,10 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
           const peers = message.peers
           if (!isSnapshot(message)) return
           takeSnapshotRef.current(message)
-          pending.current.clear()
-          if (kind === 'welcome') setPeers(peersFrom(peers))
+          if (kind === 'welcome') {
+            setPeers(peersFrom(peers))
+            resendHeldRef.current()
+          }
           setStatus('live')
           return
         }
@@ -235,6 +332,7 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
           return
         }
         if (message.type === 'op') onOp(message)
+        if (message.type === 'rejected' && typeof message.opId === 'string') rejectMoveRef.current(message.opId)
         if (message.type === 'rejected' || message.type === 'error') void refetch()
       }
       ws.onclose = () => {
@@ -254,17 +352,6 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
       socket?.close()
     }
   }, [me])
-
-  function sendOp(op: BoardOp) {
-    const opId = crypto.randomUUID()
-    pending.current.add(opId)
-    const socket = socketRef.current
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      pending.current.delete(opId)
-      return
-    }
-    socket.send(JSON.stringify({ type: 'op', opId, op }))
-  }
 
   function mutate(op: BoardOp) {
     const next = applyOp(boardRef.current, op)
@@ -286,8 +373,13 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
     addNode(node: BoardNode) {
       mutate({ type: 'node.add', node })
     },
+    updateNode(id: string, html: string) {
+      mutate({ type: 'node.edit', id, html })
+    },
     removeNode(id: string) {
       if (dragging.current === id) dragging.current = null
+      if (held.current?.id === id) held.current = null
+      if (inflight.current?.id === id) inflight.current = null
       mutate({ type: 'node.remove', id })
     },
     addEdge(edge: BoardEdge) {
@@ -299,18 +391,29 @@ export function useBoardSync(initial: BoardSnapshot, name: string) {
     previewMove(id: string, x: number, y: number) {
       const next = applyOp(boardRef.current, { type: 'node.move', id, x, y })
       if (!next) return
+      held.current = { id, x, y, released: false, confirmOpId: null, confirmRevision: null }
       setBoard(next)
-      const now = performance.now()
-      if (now - lastMove.current < MOVE_INTERVAL_MS) return
-      lastMove.current = now
-      sendOp({ type: 'node.move', id, x, y })
+      sendHeldMove(false)
     },
     commitMove(id: string, x: number, y: number) {
       dragging.current = null
       const next = applyOp(boardRef.current, { type: 'node.move', id, x, y })
-      if (next) setBoard(next)
-      lastMove.current = performance.now()
-      sendOp({ type: 'node.move', id, x, y })
+      if (!next) {
+        held.current = null
+        return
+      }
+      const flight = inflight.current
+      const sameInflight = flight?.id === id && flight.x === x && flight.y === y
+      held.current = {
+        id,
+        x,
+        y,
+        released: true,
+        confirmOpId: sameInflight ? flight.opId : null,
+        confirmRevision: null,
+      }
+      setBoard(next)
+      if (!sameInflight) sendHeldMove(true)
     },
     noteCursor(point: { x: number; y: number } | null) {
       if (!point) {

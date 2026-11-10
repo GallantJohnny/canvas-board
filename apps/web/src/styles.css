@@ -58,6 +58,7 @@ body {
 .world {
   position: absolute;
   inset: 0;
+  transform-origin: 0 0;
   pointer-events: none;
 }
 
@@ -132,6 +133,7 @@ body {
 
 .node-follow,
 .node-center,
+.node-edit,
 .node-remove {
   width: 28px;
   display: grid;
@@ -151,8 +153,13 @@ body {
   border-radius: 0 12px 0 0;
 }
 
+.node-edit[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.24);
+}
+
 .node-follow:hover,
 .node-center:hover,
+.node-edit:hover,
 .node-remove:hover {
   color: var(--white);
   background: rgba(255, 255, 255, 0.16);
@@ -160,6 +167,7 @@ body {
 
 .node-follow:focus-visible,
 .node-center:focus-visible,
+.node-edit:focus-visible,
 .node-remove:focus-visible {
   outline: 2px solid var(--white);
   outline-offset: -2px;
@@ -173,6 +181,11 @@ body {
   width: 18px;
   height: 8px;
   background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 1.4px, transparent 1.6px) 0 0 / 6px 4px;
+}
+
+.node.is-editing {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
 }
 
 .node-body {
@@ -405,6 +418,30 @@ body {
   line-height: 1.4;
 }
 
+.composer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.composer-cancel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: var(--white);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.composer-cancel:hover {
+  background: var(--blue-soft);
+}
+
+.composer-cancel:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 .composer-add {
   align-self: flex-start;
   border: 0;
@@ -418,6 +455,46 @@ body {
 
 .composer-add:hover {
   background: var(--blue-dark);
+}
+
+.zoom-controls {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  z-index: 4;
+  display: grid;
+  gap: 8px;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  cursor: auto;
+}
+
+.zoom-controls button {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--blue);
+  box-shadow: 0 4px 16px rgba(0, 83, 159, 0.08);
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoom-controls button:hover:not(:disabled) {
+  background: var(--blue-soft);
+}
+
+.zoom-controls button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.zoom-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .roster {
@@ -505,6 +582,36 @@ body {
   line-height: 1.4;
 }
 
+.watermark {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  opacity: 0.9;
+  pointer-events: none;
+  user-select: none;
+}
+
+.watermark-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.watermark-logo {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex: 0 0 auto;
+}
+
 .hint {
   position: absolute;
   left: 16px;
@@ -512,7 +619,7 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  max-width: 420px;
+  max-width: min(420px, calc(100% - 280px));
   margin: 0;
   padding: 8px 8px 8px 10px;
   border-radius: 8px;
