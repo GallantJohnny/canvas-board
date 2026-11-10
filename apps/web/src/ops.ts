@@ -14,6 +14,14 @@ export function applyOp(board: Board, op: BoardOp): Board | null {
     }
   }
 
+  if (op.type === 'node.resize') {
+    if (!board.nodes.some((node) => node.id === op.id)) return null
+    return {
+      nodes: board.nodes.map((node) => (node.id === op.id ? { ...node, width: op.width } : node)),
+      edges: board.edges,
+    }
+  }
+
   if (op.type === 'node.edit') {
     if (!board.nodes.some((node) => node.id === op.id)) return null
     return {

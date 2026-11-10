@@ -55,6 +55,11 @@ body {
   cursor: crosshair;
 }
 
+.viewport.is-resizing,
+.viewport.is-resizing * {
+  cursor: ew-resize;
+}
+
 .world {
   position: absolute;
   inset: 0;
@@ -189,8 +194,8 @@ body {
 }
 
 .node-body {
-  padding: 12px 14px 14px;
-  font-size: 14px;
+  padding: 20px 24px 24px;
+  font-size: 21px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -201,7 +206,7 @@ body {
 
 .node-body h2 {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: 22.5px;
   letter-spacing: -0.01em;
   color: var(--blue);
 }
@@ -230,12 +235,12 @@ body {
 .node-body .kicker {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 18px;
 }
 
 .node-body .kicker {
   margin-bottom: 4px;
-  font-size: 11px;
+  font-size: 16.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -243,7 +248,7 @@ body {
 .node-body .stat {
   margin: 0 0 4px;
   color: var(--blue);
-  font-size: 42px;
+  font-size: 63px;
   line-height: 1;
   font-weight: 650;
 }
@@ -266,6 +271,7 @@ body {
 
 .port {
   right: -7px;
+  z-index: 4;
   width: 14px;
   height: 14px;
   padding: 0;
@@ -273,6 +279,42 @@ body {
   background: var(--blue);
   cursor: crosshair;
   touch-action: none;
+}
+
+.node-resize {
+  position: absolute;
+  top: 28px;
+  right: -6px;
+  bottom: 0;
+  z-index: 3;
+  width: 14px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.node-resize::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 14px);
+  right: 16px;
+  width: 6px;
+  height: 14px;
+  transform: translateY(-50%);
+  border-right: 2px solid var(--line);
+  border-left: 2px solid var(--line);
+}
+
+.node-resize:hover::after,
+.node-resize:focus-visible::after {
+  border-color: var(--blue);
+}
+
+.node-resize:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
 }
 
 .port:hover {

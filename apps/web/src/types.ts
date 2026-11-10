@@ -3,6 +3,7 @@ export type BoardNode = {
   x: number
   y: number
   html: string
+  width?: number
 }
 
 export type BoardEdge = {
@@ -23,6 +24,7 @@ export type BoardSnapshot = Board & {
 export type BoardOp =
   | { type: 'node.add'; node: BoardNode }
   | { type: 'node.move'; id: string; x: number; y: number }
+  | { type: 'node.resize'; id: string; width: number }
   | { type: 'node.edit'; id: string; html: string }
   | { type: 'node.remove'; id: string }
   | { type: 'edge.add'; edge: BoardEdge }

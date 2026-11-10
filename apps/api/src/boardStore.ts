@@ -1,5 +1,5 @@
 import { fanout } from './liveBus.js'
-import { applyOp, parseOp } from './ops.js'
+import { applyOp, normalizeCardWidth, parseOp } from './ops.js'
 import { getRedis } from './redis.js'
 import { createSeed } from './seed.js'
 import type { Board, BoardOp, BoardSnapshot, Peer } from './types.js'
@@ -158,9 +158,11 @@ export function parseBoard(value: unknown): Board | null {
     if (typeof id !== 'string' || id.length === 0) return null
     if (!isFiniteNumber(x) || !isFiniteNumber(y)) return null
     if (typeof html !== 'string') return null
+    if (item.width !== undefined && normalizeCardWidth(item.width) === undefined) return null
     if (ids.has(id)) return null
     ids.add(id)
-    nodes.push({ id, x, y, html })
+    const width = normalizeCardWidth(item.width)
+    nodes.push(width === undefined ? { id, x, y, html } : { id, x, y, html, width })
   }
 
   const edges: Board['edges'] = []

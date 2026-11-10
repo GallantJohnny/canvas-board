@@ -1,7 +1,16 @@
 import type { BoardNode, Size } from './types'
 
+export const CARD_WIDTH = 280
+export const MIN_CARD_WIDTH = 180
+export const MAX_CARD_WIDTH = 720
+
+export function clampCardWidth(width: number) {
+  if (!Number.isFinite(width)) return CARD_WIDTH
+  return Math.round(Math.min(MAX_CARD_WIDTH, Math.max(MIN_CARD_WIDTH, width)))
+}
+
 export function anchor(node: BoardNode, size: Size | undefined, side: 'left' | 'right') {
-  const width = size?.width ?? 280
+  const width = size?.width ?? CARD_WIDTH
   const height = size?.height ?? 140
   return {
     x: node.x + (side === 'right' ? width : 0),
