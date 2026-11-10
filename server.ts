@@ -26,7 +26,11 @@ app.use((req, res, next) => {
     return
   }
 
-  res.sendFile(file)
+  // Packaged files share one old timestamp, so the default validator keeps a stale
+  // index.html that points at a script from a previous deploy.
+  const hashedAsset = requested.startsWith('assets/')
+  res.setHeader('Cache-Control', hashedAsset ? 'public, max-age=31536000, immutable' : 'no-store')
+  res.sendFile(file, { etag: false, lastModified: false, cacheControl: false })
 })
 
 if (typeof express !== 'function') {

@@ -23,6 +23,7 @@ export type BoardSnapshot = Board & {
 export type BoardOp =
   | { type: 'node.add'; node: BoardNode }
   | { type: 'node.move'; id: string; x: number; y: number }
+  | { type: 'node.edit'; id: string; html: string }
   | { type: 'node.remove'; id: string }
   | { type: 'edge.add'; edge: BoardEdge }
   | { type: 'edge.remove'; id: string }

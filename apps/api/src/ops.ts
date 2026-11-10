@@ -39,6 +39,10 @@ export function parseOp(value: unknown): BoardOp | null {
     if (!isId(value.id) || !isFiniteNumber(value.x) || !isFiniteNumber(value.y)) return null
     return { type: 'node.move', id: value.id, x: value.x, y: value.y }
   }
+  if (value.type === 'node.edit') {
+    if (!isId(value.id) || typeof value.html !== 'string' || value.html.length > MAX_TEXT) return null
+    return { type: 'node.edit', id: value.id, html: value.html }
+  }
   if (value.type === 'node.remove') {
     if (!isId(value.id)) return null
     return { type: 'node.remove', id: value.id }
@@ -64,6 +68,14 @@ export function applyOp(board: Board, op: BoardOp): Board | null {
     if (!board.nodes.some((node) => node.id === op.id)) return null
     return {
       nodes: board.nodes.map((node) => (node.id === op.id ? { ...node, x: op.x, y: op.y } : node)),
+      edges: board.edges,
+    }
+  }
+
+  if (op.type === 'node.edit') {
+    if (!board.nodes.some((node) => node.id === op.id)) return null
+    return {
+      nodes: board.nodes.map((node) => (node.id === op.id ? { ...node, html: op.html } : node)),
       edges: board.edges,
     }
   }

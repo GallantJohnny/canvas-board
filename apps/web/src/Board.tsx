@@ -5,10 +5,15 @@ import { HtmlEditor } from './HtmlEditor'
 import { NodeCard } from './NodeCard'
 import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
+import { Watermark } from './Watermark'
 
 const CARD_WIDTH = 280
 const STAGGER = 24
 const TAG_ERROR = 'The card has to be defined with HTML tags.'
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 2
+const ZOOM_STEP = 0.25
+const GRID = 22
 
 function markupErrorOf(html: string): string | null {
   const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -37,6 +42,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   const viewportRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const panRef = useRef<Pan>({ x: 0, y: 0 })
+  const zoomRef = useRef(1)
   const placeStep = useRef(0)
   const centerToken = useRef(0)
   const followStep = useRef<Record<string, number>>({})
@@ -45,21 +51,25 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   syncRef.current = sync
   const { nodes, edges, peers, me, status } = sync
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 })
+  const [zoom, setZoom] = useState(1)
   const [sizes, setSizes] = useState<Record<string, Size>>({})
   const [draft, setDraft] = useState<DraftLink | null>(null)
   const [panning, setPanning] = useState(false)
   const [markup, setMarkup] = useState('')
   const [markupError, setMarkupError] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [composerOpen, setComposerOpen] = useState(true)
   const [hintOpen, setHintOpen] = useState(true)
 
   panRef.current = pan
+  zoomRef.current = zoom
 
   const toBoard = useCallback((clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
+    const scale = zoomRef.current || 1
     return {
-      x: clientX - (rect?.left ?? 0) - panRef.current.x,
-      y: clientY - (rect?.top ?? 0) - panRef.current.y,
+      x: (clientX - (rect?.left ?? 0) - panRef.current.x) / scale,
+      y: (clientY - (rect?.top ?? 0) - panRef.current.y) / scale,
     }
   }, [])
 
@@ -86,10 +96,11 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         return
       }
       if (current.kind === 'drag') {
+        const scale = zoomRef.current || 1
         syncRef.current.previewMove(
           current.id,
-          current.originX + event.clientX - current.startClientX,
-          current.originY + event.clientY - current.startClientY,
+          current.originX + (event.clientX - current.startClientX) / scale,
+          current.originY + (event.clientY - current.startClientY) / scale,
         )
         return
       }
@@ -103,10 +114,11 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       gesture.current = null
       setPanning(false)
       if (current.kind === 'drag') {
+        const scale = zoomRef.current || 1
         syncRef.current.commitMove(
           current.id,
-          current.originX + event.clientX - current.startClientX,
-          current.originY + event.clientY - current.startClientY,
+          current.originX + (event.clientX - current.startClientX) / scale,
+          current.originY + (event.clientY - current.startClientY) / scale,
         )
         return
       }
@@ -191,6 +203,21 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     sync.removeEdge(id)
   }
 
+  function beginEdit(id: string) {
+    const node = nodes.find((item) => item.id === id)
+    if (!node) return
+    setEditingId(id)
+    setMarkup(node.html)
+    setMarkupError(null)
+    setComposerOpen(true)
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setMarkup('')
+    setMarkupError(null)
+  }
+
   function addCard() {
     const html = markup.trim()
     if (!html) return
@@ -199,12 +226,20 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       setMarkupError(error)
       return
     }
+    if (editingId) {
+      sync.updateNode(editingId, html)
+      setEditingId(null)
+      setMarkup('')
+      setMarkupError(null)
+      return
+    }
     const rect = viewportRef.current?.getBoundingClientRect()
     if (!rect) return
     const step = placeStep.current * STAGGER
     placeStep.current += 1
-    const x = rect.width / 2 - panRef.current.x - CARD_WIDTH / 2 + step
-    const y = rect.height / 2 - panRef.current.y + step
+    const scale = zoomRef.current || 1
+    const x = (rect.width / 2 - panRef.current.x) / scale - CARD_WIDTH / 2 + step
+    const y = (rect.height / 2 - panRef.current.y) / scale + step
     sync.addNode({ id: `n-${crypto.randomUUID()}`, x, y, html })
     setMarkup('')
     setMarkupError(null)
@@ -237,8 +272,9 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     const measured = element instanceof HTMLElement ? element : null
     const width = sizes[id]?.width || measured?.offsetWidth || CARD_WIDTH
     const height = sizes[id]?.height || measured?.offsetHeight || 0
-    const targetX = rect.width / 2 - (node.x + width / 2)
-    const targetY = rect.height / 2 - (node.y + height / 2)
+    const scale = zoomRef.current || 1
+    const targetX = rect.width / 2 - (node.x + width / 2) * scale
+    const targetY = rect.height / 2 - (node.y + height / 2) * scale
     const from = panRef.current
     const token = ++centerToken.current
     const started = performance.now()
@@ -263,7 +299,25 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     requestAnimationFrame(step)
   }
 
+  function zoomBy(direction: 1 | -1) {
+    const rect = viewportRef.current?.getBoundingClientRect()
+    const current = zoomRef.current
+    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((current + direction * ZOOM_STEP) * 100) / 100))
+    if (!rect || next === current) return
+    cancelCenter()
+    const cx = rect.width / 2
+    const cy = rect.height / 2
+    const boardX = (cx - panRef.current.x) / current
+    const boardY = (cy - panRef.current.y) / current
+    const origin = { x: cx - boardX * next, y: cy - boardY * next }
+    panRef.current = origin
+    zoomRef.current = next
+    setPan(origin)
+    setZoom(next)
+  }
+
   function removeNode(id: string) {
+    if (editingId === id) cancelEdit()
     sync.removeNode(id)
     setSizes((prev) => {
       if (!(id in prev)) return prev
@@ -285,6 +339,10 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       return changed ? next : prev
     })
   }, [nodes])
+
+  useEffect(() => {
+    if (editingId && !nodes.some((node) => node.id === editingId)) cancelEdit()
+  }, [nodes, editingId])
 
   const people: Peer[] = peers.some((peer) => peer.clientId === me.clientId)
     ? peers
@@ -311,7 +369,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         {composerOpen ? (
           <div className="composer-body">
             <label className="composer-label" id="card-html-label" htmlFor="card-html">
-              Card markup
+              {editingId ? 'Edit markup' : 'Card markup'}
             </label>
             <HtmlEditor
               value={markup}
@@ -332,20 +390,30 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
                 {markupError}
               </p>
             ) : null}
-            <button type="button" className="composer-add" onClick={addCard}>
-              Add card
-            </button>
+            <div className="composer-actions">
+              {editingId ? (
+                <button type="button" className="composer-cancel" onClick={cancelEdit}>
+                  Cancel
+                </button>
+              ) : null}
+              <button type="button" className="composer-add" onClick={addCard}>
+                {editingId ? 'Save card' : 'Add card'}
+              </button>
+            </div>
           </div>
         ) : null}
       </aside>
       <div
         ref={viewportRef}
         className={className}
-        style={{ backgroundPosition: `${pan.x}px ${pan.y}px` }}
+        style={{
+          backgroundPosition: `${pan.x}px ${pan.y}px`,
+          backgroundSize: `${GRID * zoom}px ${GRID * zoom}px`,
+        }}
         onPointerDown={onBackgroundPointerDown}
         onPointerLeave={() => sync.noteCursor(null)}
       >
-        <div className="world" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
+        <div className="world" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
           <Edges nodes={nodes} edges={edges} sizes={sizes} draft={draft} onRemove={removeEdge} />
           {nodes.map((node) => (
             <NodeCard
@@ -358,6 +426,8 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
               onFollow={followNode}
               canFollowIn={edges.some((edge) => edge.to === node.id)}
               canFollowOut={edges.some((edge) => edge.from === node.id)}
+              editing={editingId === node.id}
+              onEdit={beginEdit}
               onRemove={removeNode}
             />
           ))}
@@ -377,6 +447,14 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
             ),
           )}
         </div>
+        <div className="zoom-controls" data-chrome>
+          <button type="button" aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1)}>
+            +
+          </button>
+          <button type="button" aria-label="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-1)}>
+            −
+          </button>
+        </div>
         <div className="roster" data-chrome>
           <p className="roster-status">
             <span className={`roster-dot ${status}`} />
@@ -391,12 +469,14 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
             ))}
           </ul>
         </div>
+        <Watermark />
         {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
               Write HTML in the panel to add a card. Use the card control to remove one, the center control to bring
               it into view, and the arrows to follow a connected card. Drag a handle to move, a port to connect, a
-              line to remove it, and empty space to pan. Moves and edits are shared. Panning stays on this screen.
+              line to remove it, and empty space to pan. Use the pencil to edit a card in the side panel, and + and − to
+              zoom. Moves and edits are shared. Panning and zoom stay on this screen.
             </p>
             <button type="button" className="hint-dismiss" aria-label="Dismiss note" onClick={() => setHintOpen(false)}>
               <span aria-hidden="true">×</span>

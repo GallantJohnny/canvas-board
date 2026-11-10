@@ -112,8 +112,10 @@ export function attachLive(server: Server) {
     }
 
     ws.on('close', leave)
+    let tail = Promise.resolve()
     ws.on('message', (data) => {
-      void handleMessage(client, data.toString()).catch((error: unknown) => {
+      const raw = data.toString()
+      tail = tail.then(() => handleMessage(client, raw)).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : 'Live message failed'
         send(ws, { type: 'error', error: message })
       })
