@@ -127,11 +127,11 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     }
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     drawBoard({
       ctx,
       width,
       height,
+      dpr,
       pan: panRef.current,
       zoom: zoomRef.current,
       nodes: nodesRef.current,
@@ -386,7 +386,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       setCursor('ew-resize')
       return
     }
-    if (hit.kind === 'handle') {
+    if (hit.kind === 'handle' || hit.kind === 'card') {
       const node = nodes.find((item) => item.id === hit.id)
       if (!node) return
       sync.setDragged(hit.id)
@@ -637,7 +637,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
-              The board is drawn on an HTML canvas. Write HTML in the panel to add a card. Drag a handle to move, the
+              The board is drawn on an HTML canvas. Write HTML in the panel to add a card. Drag a card to move it, the
               right edge to resize, a port to connect, a line to remove it, and empty space to pan. Use the pencil to
               edit, and + and − to zoom. Moves, resizes, and edits are shared.
             </p>
@@ -654,7 +654,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
 function cursorFor(hit: Hit): string {
   if (hit.kind === 'port') return 'crosshair'
   if (hit.kind === 'resize') return 'ew-resize'
-  if (hit.kind === 'handle') return 'grab'
+  if (hit.kind === 'handle' || hit.kind === 'card') return 'grab'
   if (hit.kind === 'edge') return 'pointer'
   if (
     hit.kind === 'edit' ||

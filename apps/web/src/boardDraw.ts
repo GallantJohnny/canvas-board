@@ -314,6 +314,7 @@ export function drawBoard(options: {
   ctx: CanvasRenderingContext2D
   width: number
   height: number
+  dpr: number
   pan: Pan
   zoom: number
   nodes: BoardNode[]
@@ -331,6 +332,7 @@ export function drawBoard(options: {
     ctx,
     width,
     height,
+    dpr,
     pan,
     zoom,
     nodes,
@@ -345,8 +347,11 @@ export function drawBoard(options: {
     follows,
   } = options
 
+  // Clear the full backing store in device pixels, then draw in CSS pixels × dpr.
+  // Skipping either step leaves trails (“ghost cards”) when the board pans or a card moves.
   ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.clearRect(0, 0, width, height)
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.fillStyle = '#f4f7fb'
   ctx.fillRect(0, 0, width, height)
 
@@ -362,7 +367,7 @@ export function drawBoard(options: {
     }
   }
 
-  ctx.setTransform(zoom, 0, 0, zoom, pan.x, pan.y)
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, pan.x * dpr, pan.y * dpr)
 
   const byId = new Map(nodes.map((node) => [node.id, node]))
   for (const edge of edges) {
