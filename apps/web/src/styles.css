@@ -51,6 +51,16 @@ body {
   touch-action: none;
 }
 
+/* Drawable card bodies live as canvas children for HTML-in-Canvas.
+   Layout still runs so offsetHeight is real; paint goes through drawElementImage. */
+.board-canvas > .card-drawable {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
 .card-measure-root {
   position: absolute;
   left: -10000px;

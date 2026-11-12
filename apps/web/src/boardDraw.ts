@@ -1,5 +1,6 @@
 import { CARD_WIDTH, anchor, clampCardWidth, curvePoints } from './geometry'
 import type { CardBitmap } from './htmlBitmap'
+import { asHtmlInCanvasContext } from './htmlInCanvas'
 import type { BoardEdge, BoardNode, DraftLink, Peer, Size } from './types'
 
 export const BAR_HEIGHT = 28
@@ -188,12 +189,14 @@ function drawCard(
   node: BoardNode,
   metrics: CardMetrics,
   bitmap: CardBitmap | undefined,
+  element: HTMLElement | undefined,
   editing: boolean,
   canFollowIn: boolean,
   canFollowOut: boolean,
 ) {
   const { x, y } = node
   const { width, height, bodyHeight } = metrics
+  const hic = asHtmlInCanvasContext(ctx)
 
   ctx.save()
   ctx.shadowColor = 'rgba(0, 83, 159, 0.08)'
@@ -246,7 +249,21 @@ function drawCard(
     drawIcon(ctx, slot.kind, slot.x + slot.w / 2, slot.y + slot.h / 2)
   }
 
-  if (bitmap) {
+  if (element && hic) {
+    // Prefer Chrome's HTML-in-Canvas path: live DOM subtree → canvas pixels.
+    // Keep board hit-testing (preserveElementGeometry) so drag/pan stay canvas-owned.
+    try {
+      hic.drawElementImage(element, x, y + BAR_HEIGHT, {
+        preserveElementGeometry: true,
+      })
+    } catch {
+      if (bitmap) ctx.drawImage(bitmap.canvas, x, y + BAR_HEIGHT, width, bodyHeight)
+      else {
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(x, y + BAR_HEIGHT, width, bodyHeight)
+      }
+    }
+  } else if (bitmap) {
     ctx.drawImage(bitmap.canvas, x, y + BAR_HEIGHT, width, bodyHeight)
   } else {
     ctx.fillStyle = '#ffffff'
@@ -322,6 +339,7 @@ export function drawBoard(options: {
   sizes: Record<string, Size>
   metrics: Record<string, CardMetrics>
   bitmaps: Record<string, CardBitmap | undefined>
+  elements?: Record<string, HTMLElement | undefined>
   draft: DraftLink | null
   peers: Peer[]
   meId: string
@@ -340,6 +358,7 @@ export function drawBoard(options: {
     sizes,
     metrics,
     bitmaps,
+    elements,
     draft,
     peers,
     meId,
@@ -405,7 +424,16 @@ export function drawBoard(options: {
   for (const node of nodes) {
     const metric = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
     const follow = follows[node.id] ?? { in: false, out: false }
-    drawCard(ctx, node, metric, bitmaps[node.id], editingId === node.id, follow.in, follow.out)
+    drawCard(
+      ctx,
+      node,
+      metric,
+      bitmaps[node.id],
+      elements?.[node.id],
+      editingId === node.id,
+      follow.in,
+      follow.out,
+    )
   }
 
   for (const peer of peers) {

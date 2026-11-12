@@ -10,10 +10,13 @@ import {
 } from './boardDraw'
 import { CARD_WIDTH, clampCardWidth } from './geometry'
 import { CardBitmapCache, type CardBitmap } from './htmlBitmap'
+import { asHtmlInCanvas, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas'
 import { HtmlEditor } from './HtmlEditor'
 import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
+
+const HTML_IN_CANVAS = supportsHtmlInCanvas()
 
 const STAGGER = 24
 const TAG_ERROR = 'The card has to be defined with HTML tags.'
@@ -58,6 +61,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   const draftRef = useRef<DraftLink | null>(null)
   const editingRef = useRef<string | null>(null)
   const bitmapCache = useRef(new CardBitmapCache())
+  const cardElementsRef = useRef<Record<string, HTMLElement | undefined>>({})
   const sync = useBoardSync(initial, name)
   const syncRef = useRef(sync)
   syncRef.current = sync
@@ -92,6 +96,52 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   draftRef.current = draft
   editingRef.current = editingId
 
+  const setCardElement = (id: string, element: HTMLElement | null) => {
+    if (!element) {
+      delete cardElementsRef.current[id]
+      return
+    }
+    cardElementsRef.current[id] = element
+  }
+
+  const syncDrawableMetrics = () => {
+    if (!HTML_IN_CANVAS) return
+    const nextSizes: Record<string, Size> = { ...sizesRef.current }
+    const nextMetrics: Record<string, CardMetrics> = { ...metricsRef.current }
+    const liveIds = new Set(nodesRef.current.map((node) => node.id))
+    let changed = false
+
+    for (const id of Object.keys(nextSizes)) {
+      if (!liveIds.has(id)) {
+        delete nextSizes[id]
+        delete nextMetrics[id]
+        changed = true
+      }
+    }
+
+    for (const node of nodesRef.current) {
+      const width = clampCardWidth(node.width ?? CARD_WIDTH)
+      const element = cardElementsRef.current[node.id]
+      const bodyHeight = Math.max(
+        40,
+        element?.offsetHeight || bitmapCache.current.measureBodyHeight(node.html, width),
+      )
+      const metric = cardMetrics(node, undefined, bodyHeight)
+      const prev = nextMetrics[node.id]
+      if (!prev || prev.width !== metric.width || prev.height !== metric.height) {
+        changed = true
+      }
+      nextMetrics[node.id] = metric
+      nextSizes[node.id] = { width: metric.width, height: metric.height }
+    }
+
+    if (!changed) return
+    sizesRef.current = nextSizes
+    metricsRef.current = nextMetrics
+    setSizes(nextSizes)
+    setMetrics(nextMetrics)
+  }
+
   const toBoard = (clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
     const scale = zoomRef.current || 1
@@ -111,10 +161,10 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     return map
   }
 
-  const paint = () => {
+  const ensureCanvasSize = () => {
     const canvas = canvasRef.current
     const viewport = viewportRef.current
-    if (!canvas || !viewport) return
+    if (!canvas || !viewport) return null
     const rect = viewport.getBoundingClientRect()
     const dpr = Math.min(2, window.devicePixelRatio || 1)
     const width = Math.max(1, Math.round(rect.width))
@@ -125,13 +175,20 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       canvas.style.width = `${width}px`
       canvas.style.height = `${height}px`
     }
-    const ctx = canvas.getContext('2d')
+    return { canvas, width, height, dpr }
+  }
+
+  const paint = () => {
+    const sized = ensureCanvasSize()
+    if (!sized) return
+    syncDrawableMetrics()
+    const ctx = sized.canvas.getContext('2d')
     if (!ctx) return
     drawBoard({
       ctx,
-      width,
-      height,
-      dpr,
+      width: sized.width,
+      height: sized.height,
+      dpr: sized.dpr,
       pan: panRef.current,
       zoom: zoomRef.current,
       nodes: nodesRef.current,
@@ -139,6 +196,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       sizes: sizesRef.current,
       metrics: metricsRef.current,
       bitmaps: bitmapsRef.current,
+      elements: HTML_IN_CANVAS ? cardElementsRef.current : undefined,
       draft: draftRef.current,
       peers: peersRef.current,
       meId: syncRef.current.me.clientId,
@@ -148,6 +206,32 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   }
 
   useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    if (HTML_IN_CANVAS) {
+      canvas.setAttribute('content', 'drawable')
+      const hic = asHtmlInCanvas(canvas) as HtmlInCanvasElement
+      const onPaint = (_event: Event) => {
+        paint()
+      }
+      canvas.addEventListener('paint', onPaint as EventListener)
+      let frame = 0
+      const tick = () => {
+        ensureCanvasSize()
+        hic.requestPaint()
+        frame = requestAnimationFrame(tick)
+      }
+      frame = requestAnimationFrame(tick)
+      const onResize = () => hic.requestPaint()
+      window.addEventListener('resize', onResize)
+      return () => {
+        cancelAnimationFrame(frame)
+        canvas.removeEventListener('paint', onPaint as EventListener)
+        window.removeEventListener('resize', onResize)
+      }
+    }
+
     let frame = 0
     const tick = () => {
       paint()
@@ -163,6 +247,12 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   }, [])
 
   useEffect(() => {
+    if (HTML_IN_CANVAS) {
+      syncDrawableMetrics()
+      asHtmlInCanvas(canvasRef.current)?.requestPaint()
+      return
+    }
+
     let cancelled = false
     const cache = bitmapCache.current
     const liveIds = new Set(nodes.map((node) => node.id))
@@ -610,7 +700,23 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
           style={{ cursor }}
           onPointerDown={onCanvasPointerDown}
           aria-label="Board canvas"
-        />
+          {...(HTML_IN_CANVAS ? { content: 'drawable' } : {})}
+        >
+          {HTML_IN_CANVAS
+            ? nodes.map((node) => (
+                <div
+                  key={node.id}
+                  // HTML-in-Canvas paint root for this card body.
+                  {...{ drawable: '' }}
+                  className="node-body card-drawable"
+                  data-card-id={node.id}
+                  style={{ width: clampCardWidth(node.width ?? CARD_WIDTH) }}
+                  ref={(element) => setCardElement(node.id, element)}
+                  dangerouslySetInnerHTML={{ __html: node.html }}
+                />
+              ))
+            : null}
+        </canvas>
         <div className="zoom-controls" data-chrome>
           <button type="button" aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1)}>
             +
@@ -637,9 +743,12 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
-              The board is drawn on an HTML canvas. Write HTML in the panel to add a card. Drag a card to move it, the
-              right edge to resize, a port to connect, a line to remove it, and empty space to pan. Use the pencil to
-              edit, and + and − to zoom. Moves, resizes, and edits are shared.
+              {HTML_IN_CANVAS
+                ? 'Card HTML is live DOM drawn with the HTML-in-Canvas API (drawElementImage).'
+                : 'Card HTML is rasterized onto the canvas when HTML-in-Canvas is unavailable.'}{' '}
+              Write HTML in the panel to add a card. Drag a card to move it, the right edge to resize, a port to
+              connect, a line to remove it, and empty space to pan. Use the pencil to edit, and + and − to zoom. Moves,
+              resizes, and edits are shared.
             </p>
             <button type="button" className="hint-dismiss" aria-label="Dismiss note" onClick={() => setHintOpen(false)}>
               <span aria-hidden="true">×</span>
