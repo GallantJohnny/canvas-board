@@ -40,157 +40,23 @@ body {
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  cursor: grab;
   touch-action: none;
   background-color: var(--canvas);
-  background-image: radial-gradient(rgba(0, 83, 159, 0.22) 1px, transparent 1px);
-  background-size: 22px 22px;
 }
 
-.viewport.is-panning {
-  cursor: grabbing;
-}
-
-.viewport.is-connecting {
-  cursor: crosshair;
-}
-
-.viewport.is-resizing,
-.viewport.is-resizing * {
-  cursor: ew-resize;
-}
-
-.world {
-  position: absolute;
-  inset: 0;
-  transform-origin: 0 0;
-  pointer-events: none;
-}
-
-.edges {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.edge-line {
-  fill: none;
-  stroke: var(--blue);
-  stroke-width: 2;
-  pointer-events: none;
-}
-
-.edge-line.draft {
-  stroke-dasharray: 6 5;
-}
-
-.edge-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 16;
-  pointer-events: stroke;
-  cursor: pointer;
-}
-
-.node {
-  position: absolute;
-  width: 280px;
-  pointer-events: auto;
-  cursor: default;
-  background: var(--white);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 83, 159, 0.08);
-}
-
-.node-bar {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: stretch;
-  height: 28px;
-  border-bottom: 1px solid var(--blue);
-  background: var(--blue);
-  color: var(--white);
-  border-radius: 12px 12px 0 0;
-}
-
-.node-handle {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  cursor: grab;
-  user-select: none;
+.board-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
   touch-action: none;
-  border: 0;
-  background: transparent;
-  border-radius: 12px 0 0 0;
-  font: inherit;
-  color: inherit;
 }
 
-.node-follow,
-.node-center,
-.node-edit,
-.node-remove {
-  width: 28px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.28);
-  background: transparent;
-  color: var(--white);
-  cursor: pointer;
-  padding: 0;
-  font: inherit;
-  font-size: 16px;
-  line-height: 1;
-}
-
-.node-remove {
-  border-radius: 0 12px 0 0;
-}
-
-.node-edit[aria-pressed='true'] {
-  background: rgba(255, 255, 255, 0.24);
-}
-
-.node-follow:hover,
-.node-center:hover,
-.node-edit:hover,
-.node-remove:hover {
-  color: var(--white);
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.node-follow:focus-visible,
-.node-center:focus-visible,
-.node-edit:focus-visible,
-.node-remove:focus-visible {
-  outline: 2px solid var(--white);
-  outline-offset: -2px;
-}
-
-.node-handle:active {
-  cursor: grabbing;
-}
-
-.grip {
-  width: 18px;
-  height: 8px;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 1.4px, transparent 1.6px) 0 0 / 6px 4px;
-}
-
-.node.is-editing {
-  outline: 2px solid var(--blue);
-  outline-offset: 3px;
+.card-measure-root {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .node-body {
@@ -251,79 +117,6 @@ body {
   font-size: 63px;
   line-height: 1;
   font-weight: 650;
-}
-
-.inlet,
-.port {
-  position: absolute;
-  top: 50%;
-  z-index: 1;
-  transform: translateY(-50%);
-  border-radius: 50%;
-}
-
-.inlet {
-  left: -5px;
-  width: 10px;
-  height: 10px;
-  background: var(--blue);
-}
-
-.port {
-  right: -7px;
-  z-index: 4;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  border: 2px solid var(--white);
-  background: var(--blue);
-  cursor: crosshair;
-  touch-action: none;
-}
-
-.node-resize {
-  position: absolute;
-  top: 28px;
-  right: -6px;
-  bottom: 0;
-  z-index: 3;
-  width: 14px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  cursor: ew-resize;
-  touch-action: none;
-}
-
-.node-resize::after {
-  content: "";
-  position: absolute;
-  top: calc(50% - 14px);
-  right: 16px;
-  width: 6px;
-  height: 14px;
-  transform: translateY(-50%);
-  border-right: 2px solid var(--line);
-  border-left: 2px solid var(--line);
-}
-
-.node-resize:hover::after,
-.node-resize:focus-visible::after {
-  border-color: var(--blue);
-}
-
-.node-resize:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-}
-
-.port:hover {
-  background: var(--blue-dark);
-}
-
-.port:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
 }
 
 .composer {
@@ -595,33 +388,6 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-}
-
-.remote-cursor {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 6;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  pointer-events: none;
-}
-
-.remote-cursor-mark {
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--white);
-  border-radius: 999px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-}
-
-.remote-cursor-name {
-  padding: 1px 6px;
-  border-radius: 999px;
-  color: var(--white);
-  font-size: 11px;
-  line-height: 1.4;
 }
 
 .watermark {

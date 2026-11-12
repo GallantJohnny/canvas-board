@@ -37,6 +37,7 @@ export async function publishRemote(event: LiveEvent) {
 
 export async function fanout(event: LiveEvent) {
   emitLocal(event)
+  if (!redisSocketUrl()) return
   try {
     await publishRemote(event)
   } catch (error) {

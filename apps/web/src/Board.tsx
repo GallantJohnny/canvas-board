@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { Edges } from './Edges'
-import { anchor, CARD_WIDTH, clampCardWidth } from './geometry'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  cardMetrics,
+  drawBoard,
+  hitTest,
+  nodeAtPoint,
+  type CardMetrics,
+  type Hit,
+  type Pan,
+} from './boardDraw'
+import { CARD_WIDTH, clampCardWidth } from './geometry'
+import { CardBitmapCache, type CardBitmap } from './htmlBitmap'
 import { HtmlEditor } from './HtmlEditor'
-import { NodeCard } from './NodeCard'
 import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
@@ -12,7 +20,6 @@ const TAG_ERROR = 'The card has to be defined with HTML tags.'
 const MIN_ZOOM = 0.25
 const MAX_ZOOM = 2
 const ZOOM_STEP = 0.25
-const GRID = 22
 
 function markupErrorOf(html: string): string | null {
   const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -21,8 +28,6 @@ function markupErrorOf(html: string): string | null {
   if (!hasElement) return TAG_ERROR
   return null
 }
-
-type Pan = { x: number; y: number }
 
 type Gesture =
   | { kind: 'pan'; pointerId: number; startClientX: number; startClientY: number; origin: Pan }
@@ -40,19 +45,35 @@ type Gesture =
 
 export function Board({ initial, name }: { initial: BoardSnapshot; name: string }) {
   const viewportRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const panRef = useRef<Pan>({ x: 0, y: 0 })
   const zoomRef = useRef(1)
   const placeStep = useRef(0)
   const centerToken = useRef(0)
   const followStep = useRef<Record<string, number>>({})
+  const sizesRef = useRef<Record<string, Size>>({})
+  const metricsRef = useRef<Record<string, CardMetrics>>({})
+  const bitmapsRef = useRef<Record<string, CardBitmap | undefined>>({})
+  const draftRef = useRef<DraftLink | null>(null)
+  const editingRef = useRef<string | null>(null)
+  const bitmapCache = useRef(new CardBitmapCache())
   const sync = useBoardSync(initial, name)
   const syncRef = useRef(sync)
   syncRef.current = sync
   const { nodes, edges, peers, me, status } = sync
+  const nodesRef = useRef(nodes)
+  const edgesRef = useRef(edges)
+  const peersRef = useRef(peers)
+  nodesRef.current = nodes
+  edgesRef.current = edges
+  peersRef.current = peers
+
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [sizes, setSizes] = useState<Record<string, Size>>({})
+  const [metrics, setMetrics] = useState<Record<string, CardMetrics>>({})
+  const [bitmaps, setBitmaps] = useState<Record<string, CardBitmap | undefined>>({})
   const [draft, setDraft] = useState<DraftLink | null>(null)
   const [panning, setPanning] = useState(false)
   const [resizing, setResizing] = useState(false)
@@ -61,21 +82,146 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [composerOpen, setComposerOpen] = useState(true)
   const [hintOpen, setHintOpen] = useState(true)
+  const [cursor, setCursor] = useState('grab')
 
   panRef.current = pan
   zoomRef.current = zoom
+  sizesRef.current = sizes
+  metricsRef.current = metrics
+  bitmapsRef.current = bitmaps
+  draftRef.current = draft
+  editingRef.current = editingId
 
-  const toBoard = useCallback((clientX: number, clientY: number) => {
+  const toBoard = (clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
     const scale = zoomRef.current || 1
     return {
       x: (clientX - (rect?.left ?? 0) - panRef.current.x) / scale,
       y: (clientY - (rect?.top ?? 0) - panRef.current.y) / scale,
     }
+  }
+
+  const followsFor = () => {
+    const map: Record<string, { in: boolean; out: boolean }> = {}
+    for (const node of nodesRef.current) map[node.id] = { in: false, out: false }
+    for (const edge of edgesRef.current) {
+      if (map[edge.from]) map[edge.from].out = true
+      if (map[edge.to]) map[edge.to].in = true
+    }
+    return map
+  }
+
+  const paint = () => {
+    const canvas = canvasRef.current
+    const viewport = viewportRef.current
+    if (!canvas || !viewport) return
+    const rect = viewport.getBoundingClientRect()
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    const width = Math.max(1, Math.round(rect.width))
+    const height = Math.max(1, Math.round(rect.height))
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
+    }
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    drawBoard({
+      ctx,
+      width,
+      height,
+      pan: panRef.current,
+      zoom: zoomRef.current,
+      nodes: nodesRef.current,
+      edges: edgesRef.current,
+      sizes: sizesRef.current,
+      metrics: metricsRef.current,
+      bitmaps: bitmapsRef.current,
+      draft: draftRef.current,
+      peers: peersRef.current,
+      meId: syncRef.current.me.clientId,
+      editingId: editingRef.current,
+      follows: followsFor(),
+    })
+  }
+
+  useEffect(() => {
+    let frame = 0
+    const tick = () => {
+      paint()
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    const onResize = () => paint()
+    window.addEventListener('resize', onResize)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', onResize)
+    }
   }, [])
 
-  const toBoardRef = useRef(toBoard)
-  toBoardRef.current = toBoard
+  useEffect(() => {
+    let cancelled = false
+    const cache = bitmapCache.current
+    const liveIds = new Set(nodes.map((node) => node.id))
+    cache.prune(liveIds)
+
+    const nextSizes: Record<string, Size> = { ...sizesRef.current }
+    const nextMetrics: Record<string, CardMetrics> = { ...metricsRef.current }
+    const nextBitmaps: Record<string, CardBitmap | undefined> = { ...bitmapsRef.current }
+    let changed = false
+
+    for (const id of Object.keys(nextSizes)) {
+      if (!liveIds.has(id)) {
+        delete nextSizes[id]
+        delete nextMetrics[id]
+        delete nextBitmaps[id]
+        changed = true
+      }
+    }
+
+    const tasks = nodes.map(async (node) => {
+      const width = clampCardWidth(node.width ?? CARD_WIDTH)
+      const bodyHeight = cache.measureBodyHeight(node.html, width)
+      const metric = cardMetrics(node, undefined, bodyHeight)
+      const prev = nextMetrics[node.id]
+      if (!prev || prev.width !== metric.width || prev.height !== metric.height) {
+        nextMetrics[node.id] = metric
+        nextSizes[node.id] = { width: metric.width, height: metric.height }
+        changed = true
+      }
+      const key = cache.key(node.id, node.html, width)
+      const cached = cache.peek(key)
+      if (cached && nextBitmaps[node.id] === cached) return
+      const bitmap = cached ?? (await cache.ensure(node.id, node.html, width))
+      if (cancelled) return
+      nextBitmaps[node.id] = bitmap
+      nextMetrics[node.id] = cardMetrics(node, undefined, bitmap.bodyHeight)
+      nextSizes[node.id] = {
+        width: nextMetrics[node.id].width,
+        height: nextMetrics[node.id].height,
+      }
+      changed = true
+    })
+
+    void Promise.all(tasks).then(() => {
+      if (cancelled || !changed) return
+      setSizes(nextSizes)
+      setMetrics(nextMetrics)
+      setBitmaps(nextBitmaps)
+    })
+
+    if (changed) {
+      setSizes(nextSizes)
+      setMetrics(nextMetrics)
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [nodes])
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -86,9 +232,28 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         event.clientX <= rect.right &&
         event.clientY >= rect.top &&
         event.clientY <= rect.bottom
-      syncRef.current.noteCursor(inside ? toBoardRef.current(event.clientX, event.clientY) : null)
+      const point = inside ? toBoard(event.clientX, event.clientY) : null
+      syncRef.current.noteCursor(point)
+
       const current = gesture.current
-      if (!current || event.pointerId !== current.pointerId) return
+      if (!current || event.pointerId !== current.pointerId) {
+        if (!inside || !point) {
+          setCursor('grab')
+          return
+        }
+        const hit = hitTest({
+          boardX: point.x,
+          boardY: point.y,
+          zoom: zoomRef.current,
+          nodes: nodesRef.current,
+          edges: edgesRef.current,
+          sizes: sizesRef.current,
+          metrics: metricsRef.current,
+          follows: followsFor(),
+        })
+        setCursor(cursorFor(hit))
+        return
+      }
       if (current.kind === 'pan') {
         setPan({
           x: current.origin.x + event.clientX - current.startClientX,
@@ -113,7 +278,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         )
         return
       }
-      const point = toBoardRef.current(event.clientX, event.clientY)
+      if (!point) return
       setDraft({ fromId: current.fromId, x: point.x, y: point.y })
     }
 
@@ -141,8 +306,8 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         return
       }
       if (current.kind !== 'connect') return
-      const hit = document.elementFromPoint(event.clientX, event.clientY)
-      const toId = hit?.closest('[data-node-id]')?.getAttribute('data-node-id')
+      const point = toBoard(event.clientX, event.clientY)
+      const toId = nodeAtPoint(point.x, point.y, nodesRef.current, metricsRef.current, sizesRef.current)
       setDraft(null)
       if (!toId || toId === current.fromId) return
       syncRef.current.addEdge({ id: `e-${crypto.randomUUID()}`, from: current.fromId, to: toId })
@@ -159,23 +324,85 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     }
   }, [])
 
-  const onResize = useCallback((id: string, size: Size) => {
-    setSizes((prev) => {
-      const current = prev[id]
-      if (current && current.width === size.width && current.height === size.height) return prev
-      return { ...prev, [id]: size }
-    })
-  }, [])
-
   function cancelCenter() {
     centerToken.current += 1
   }
 
-  function onBackgroundPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+  function onCanvasPointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.button !== 0) return
     cancelCenter()
-    const target = event.target as Element
-    if (target.closest('[data-node-id]') || target.closest('.edge-hit') || target.closest('[data-chrome]')) return
+    const point = toBoard(event.clientX, event.clientY)
+    const hit = hitTest({
+      boardX: point.x,
+      boardY: point.y,
+      zoom: zoomRef.current,
+      nodes: nodesRef.current,
+      edges: edgesRef.current,
+      sizes: sizesRef.current,
+      metrics: metricsRef.current,
+      follows: followsFor(),
+    })
+
+    if (hit.kind === 'edge') {
+      sync.removeEdge(hit.id)
+      return
+    }
+    if (hit.kind === 'remove') {
+      removeNode(hit.id)
+      return
+    }
+    if (hit.kind === 'edit') {
+      beginEdit(hit.id)
+      return
+    }
+    if (hit.kind === 'center') {
+      centerNode(hit.id)
+      return
+    }
+    if (hit.kind === 'follow') {
+      followNode(hit.id, hit.direction)
+      return
+    }
+    if (hit.kind === 'port') {
+      const node = nodes.find((item) => item.id === hit.id)
+      if (!node) return
+      gesture.current = { kind: 'connect', pointerId: event.pointerId, fromId: hit.id }
+      const metric = metrics[hit.id] ?? cardMetrics(node, sizes[hit.id])
+      setDraft({ fromId: hit.id, x: node.x + metric.width, y: node.y + metric.height / 2 })
+      setCursor('crosshair')
+      return
+    }
+    if (hit.kind === 'resize') {
+      const node = nodes.find((item) => item.id === hit.id)
+      if (!node) return
+      gesture.current = {
+        kind: 'resize',
+        pointerId: event.pointerId,
+        id: hit.id,
+        startClientX: event.clientX,
+        originWidth: node.width ?? CARD_WIDTH,
+      }
+      setResizing(true)
+      setCursor('ew-resize')
+      return
+    }
+    if (hit.kind === 'handle') {
+      const node = nodes.find((item) => item.id === hit.id)
+      if (!node) return
+      sync.setDragged(hit.id)
+      gesture.current = {
+        kind: 'drag',
+        pointerId: event.pointerId,
+        id: hit.id,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        originX: node.x,
+        originY: node.y,
+      }
+      setCursor('grabbing')
+      return
+    }
+
     gesture.current = {
       kind: 'pan',
       pointerId: event.pointerId,
@@ -184,67 +411,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       origin: { ...panRef.current },
     }
     setPanning(true)
-  }
-
-  function onDragStart(id: string, event: ReactPointerEvent<HTMLElement>) {
-    if (event.button !== 0) return
-    cancelCenter()
-    event.stopPropagation()
-    event.preventDefault()
-    const node = nodes.find((item) => item.id === id)
-    if (!node) return
-    sync.setDragged(id)
-    gesture.current = {
-      kind: 'drag',
-      pointerId: event.pointerId,
-      id,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      originX: node.x,
-      originY: node.y,
-    }
-  }
-
-  function onResizeStart(id: string, event: ReactPointerEvent<HTMLButtonElement>) {
-    if (event.button !== 0) return
-    cancelCenter()
-    event.stopPropagation()
-    event.preventDefault()
-    const node = nodes.find((item) => item.id === id)
-    if (!node) return
-    gesture.current = {
-      kind: 'resize',
-      pointerId: event.pointerId,
-      id,
-      startClientX: event.clientX,
-      originWidth: node.width ?? CARD_WIDTH,
-    }
-    setResizing(true)
-  }
-
-  function onResizeKey(id: string, event: ReactKeyboardEvent<HTMLButtonElement>) {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-    event.preventDefault()
-    const node = nodes.find((item) => item.id === id)
-    if (!node) return
-    const delta = event.key === 'ArrowRight' ? 16 : -16
-    sync.commitResize(id, clampCardWidth((node.width ?? CARD_WIDTH) + delta))
-  }
-
-  function onConnectStart(id: string, event: ReactPointerEvent<HTMLButtonElement>) {
-    if (event.button !== 0) return
-    cancelCenter()
-    event.stopPropagation()
-    event.preventDefault()
-    const node = nodes.find((item) => item.id === id)
-    if (!node) return
-    gesture.current = { kind: 'connect', pointerId: event.pointerId, fromId: id }
-    const port = anchor(node, sizes[id], 'right')
-    setDraft({ fromId: id, x: port.x, y: port.y })
-  }
-
-  function removeEdge(id: string) {
-    sync.removeEdge(id)
+    setCursor('grabbing')
   }
 
   function beginEdit(id: string) {
@@ -312,13 +479,10 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     const node = nodes.find((item) => item.id === id)
     const rect = viewportRef.current?.getBoundingClientRect()
     if (!node || !rect) return
-    const element = document.querySelector(`[data-node-id="${CSS.escape(id)}"]`)
-    const measured = element instanceof HTMLElement ? element : null
-    const width = sizes[id]?.width || measured?.offsetWidth || CARD_WIDTH
-    const height = sizes[id]?.height || measured?.offsetHeight || 0
+    const metric = metrics[id] ?? cardMetrics(node, sizes[id])
     const scale = zoomRef.current || 1
-    const targetX = rect.width / 2 - (node.x + width / 2) * scale
-    const targetY = rect.height / 2 - (node.y + height / 2) * scale
+    const targetX = rect.width / 2 - (node.x + metric.width / 2) * scale
+    const targetY = rect.height / 2 - (node.y + metric.height / 2) * scale
     const from = panRef.current
     const token = ++centerToken.current
     const started = performance.now()
@@ -368,26 +532,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   function removeNode(id: string) {
     if (editingId === id) cancelEdit()
     sync.removeNode(id)
-    setSizes((prev) => {
-      if (!(id in prev)) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
   }
-
-  useEffect(() => {
-    setSizes((prev) => {
-      const ids = new Set(nodes.map((node) => node.id))
-      let changed = false
-      const next: Record<string, Size> = {}
-      for (const [id, size] of Object.entries(prev)) {
-        if (ids.has(id)) next[id] = size
-        else changed = true
-      }
-      return changed ? next : prev
-    })
-  }, [nodes])
 
   useEffect(() => {
     if (editingId && !nodes.some((node) => node.id === editingId)) cancelEdit()
@@ -458,52 +603,14 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
           </div>
         ) : null}
       </aside>
-      <div
-        ref={viewportRef}
-        className={className}
-        style={{
-          backgroundPosition: `${pan.x}px ${pan.y}px`,
-          backgroundSize: `${GRID * zoom}px ${GRID * zoom}px`,
-        }}
-        onPointerDown={onBackgroundPointerDown}
-        onPointerLeave={() => sync.noteCursor(null)}
-      >
-        <div className="world" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
-          <Edges nodes={nodes} edges={edges} sizes={sizes} draft={draft} onRemove={removeEdge} />
-          {nodes.map((node) => (
-            <NodeCard
-              key={node.id}
-              node={node}
-              onResize={onResize}
-              onResizeStart={onResizeStart}
-              onResizeKey={onResizeKey}
-              onDragStart={onDragStart}
-              onConnectStart={onConnectStart}
-              onCenter={centerNode}
-              onFollow={followNode}
-              canFollowIn={edges.some((edge) => edge.to === node.id)}
-              canFollowOut={edges.some((edge) => edge.from === node.id)}
-              editing={editingId === node.id}
-              onEdit={beginEdit}
-              onRemove={removeNode}
-            />
-          ))}
-          {peers.map((peer) =>
-            peer.clientId === me.clientId || !peer.cursor ? null : (
-              <div
-                key={peer.clientId}
-                className="remote-cursor"
-                style={{ transform: `translate(${peer.cursor.x}px, ${peer.cursor.y}px)` }}
-                aria-hidden="true"
-              >
-                <span className="remote-cursor-mark" style={{ background: peer.color }} />
-                <span className="remote-cursor-name" style={{ background: peer.color }}>
-                  {peer.name}
-                </span>
-              </div>
-            ),
-          )}
-        </div>
+      <div ref={viewportRef} className={className} onPointerLeave={() => sync.noteCursor(null)}>
+        <canvas
+          ref={canvasRef}
+          className="board-canvas"
+          style={{ cursor }}
+          onPointerDown={onCanvasPointerDown}
+          aria-label="Board canvas"
+        />
         <div className="zoom-controls" data-chrome>
           <button type="button" aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1)}>
             +
@@ -530,10 +637,9 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
-              Write HTML in the panel to add a card. Use the card control to remove one, the center control to bring
-              it into view, and the arrows to follow a connected card. Drag a handle to move, the right edge to resize,
-              a port to connect, a line to remove it, and empty space to pan. Use the pencil to edit a card in the side
-              panel, and + and − to zoom. Moves, resizes, and edits are shared. Panning and zoom stay on this screen.
+              The board is drawn on an HTML canvas. Write HTML in the panel to add a card. Drag a handle to move, the
+              right edge to resize, a port to connect, a line to remove it, and empty space to pan. Use the pencil to
+              edit, and + and − to zoom. Moves, resizes, and edits are shared.
             </p>
             <button type="button" className="hint-dismiss" aria-label="Dismiss note" onClick={() => setHintOpen(false)}>
               <span aria-hidden="true">×</span>
@@ -543,4 +649,20 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       </div>
     </div>
   )
+}
+
+function cursorFor(hit: Hit): string {
+  if (hit.kind === 'port') return 'crosshair'
+  if (hit.kind === 'resize') return 'ew-resize'
+  if (hit.kind === 'handle') return 'grab'
+  if (hit.kind === 'edge') return 'pointer'
+  if (
+    hit.kind === 'edit' ||
+    hit.kind === 'remove' ||
+    hit.kind === 'center' ||
+    hit.kind === 'follow'
+  ) {
+    return 'pointer'
+  }
+  return 'grab'
 }

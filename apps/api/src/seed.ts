@@ -7,7 +7,7 @@ export function createSeed(): Board {
         id: 'notes',
         x: 36,
         y: 48,
-        html: '<h2>Field notes</h2><p>Each node is a section element. Its body can be any HTML you want on the board.</p>',
+        html: '<h2>Field notes</h2><p>Each card is painted on an HTML canvas. Its body can be any HTML you want on the board.</p>',
       },
       {
         id: 'checklist',
