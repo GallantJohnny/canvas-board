@@ -13,6 +13,7 @@ import { CARD_WIDTH, clampCardWidth } from './geometry'
 import { CardBitmapCache, type CardBitmap } from './htmlBitmap'
 import { asHtmlInCanvas, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas'
 import { HtmlEditor } from './HtmlEditor'
+import { hasHtmlElement, sanitizeHtml } from './sanitizeHtml'
 import type { BoardEdge, BoardNode, BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
@@ -26,10 +27,7 @@ const MAX_ZOOM = 2
 const ZOOM_STEP = 0.25
 
 function markupErrorOf(html: string): string | null {
-  const doc = new DOMParser().parseFromString(html, 'text/html')
-  if (doc.querySelector('script')) return TAG_ERROR
-  const hasElement = Array.from(doc.body.childNodes).some((node) => node.nodeType === Node.ELEMENT_NODE)
-  if (!hasElement) return TAG_ERROR
+  if (!hasHtmlElement(html)) return TAG_ERROR
   return null
 }
 
@@ -550,8 +548,9 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   }
 
   function addCard() {
-    const html = markup.trim()
-    if (!html) return
+    const raw = markup.trim()
+    if (!raw) return
+    const html = sanitizeHtml(raw)
     const error = markupErrorOf(html)
     if (error) {
       setMarkupError(error)
@@ -700,7 +699,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
             />
             <div className="composer-preview">
               {markup.trim() ? (
-                <div className="node-body" dangerouslySetInnerHTML={{ __html: markup }} />
+                <div className="node-body" dangerouslySetInnerHTML={{ __html: sanitizeHtml(markup) }} />
               ) : (
                 <p className="composer-empty">Preview shows the card as you write tags.</p>
               )}
@@ -840,7 +839,7 @@ function CardElement({
           ))}
         </span>
       </div>
-      <div className="node-body" dangerouslySetInnerHTML={{ __html: node.html }} />
+      <div className="node-body" dangerouslySetInnerHTML={{ __html: sanitizeHtml(node.html) }} />
     </div>
   )
 }

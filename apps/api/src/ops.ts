@@ -1,3 +1,4 @@
+import { sanitizeHtml } from './sanitizeHtml.js'
 import type { Board, BoardEdge, BoardNode, BoardOp } from './types.js'
 
 const MAX_TEXT = 100_000
@@ -28,7 +29,8 @@ function parseNode(value: unknown): BoardNode | null {
   if (typeof html !== 'string' || html.length > MAX_TEXT) return null
   if (value.width !== undefined && normalizeCardWidth(value.width) === undefined) return null
   const width = normalizeCardWidth(value.width)
-  return width === undefined ? { id, x, y, html } : { id, x, y, html, width }
+  const clean = sanitizeHtml(html)
+  return width === undefined ? { id, x, y, html: clean } : { id, x, y, html: clean, width }
 }
 
 function parseEdge(value: unknown): BoardEdge | null {
@@ -55,7 +57,7 @@ export function parseOp(value: unknown): BoardOp | null {
   }
   if (value.type === 'node.edit') {
     if (!isId(value.id) || typeof value.html !== 'string' || value.html.length > MAX_TEXT) return null
-    return { type: 'node.edit', id: value.id, html: value.html }
+    return { type: 'node.edit', id: value.id, html: sanitizeHtml(value.html) }
   }
   if (value.type === 'node.remove') {
     if (!isId(value.id)) return null

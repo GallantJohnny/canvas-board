@@ -10,6 +10,7 @@ import {
 } from './memoryStore.js'
 import { applyOp, normalizeCardWidth, parseOp } from './ops.js'
 import { getRedis } from './redis.js'
+import { sanitizeHtml } from './sanitizeHtml.js'
 import { createSeed } from './seed.js'
 import type { Board, BoardOp, BoardSnapshot, Peer } from './types.js'
 
@@ -182,7 +183,8 @@ export function parseBoard(value: unknown): Board | null {
     if (ids.has(id)) return null
     ids.add(id)
     const width = normalizeCardWidth(item.width)
-    nodes.push(width === undefined ? { id, x, y, html } : { id, x, y, html, width })
+    const clean = sanitizeHtml(html)
+    nodes.push(width === undefined ? { id, x, y, html: clean } : { id, x, y, html: clean, width })
   }
 
   const edges: Board['edges'] = []
