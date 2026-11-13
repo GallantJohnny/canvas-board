@@ -9,6 +9,15 @@ import {
   type Hit,
   type Pan,
 } from './boardDraw'
+import { BenchHud } from './BenchHud'
+import {
+  markBoardInteractive,
+  markBoardReady,
+  noteBenchFrame,
+  parseBenchConfig,
+  registerBenchDriver,
+  setBenchRenderPath,
+} from './bench'
 import { CARD_WIDTH, clampCardWidth } from './geometry'
 import { CardBitmapCache, type CardBitmap } from './htmlBitmap'
 import { asHtmlInCanvas, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas'
@@ -18,6 +27,7 @@ import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
 
 const HTML_IN_CANVAS = supportsHtmlInCanvas()
+const BENCH = parseBenchConfig()
 
 const STAGGER = 24
 const TAG_ERROR = 'The card has to be defined with HTML tags.'
@@ -47,7 +57,15 @@ type Gesture =
   | { kind: 'connect'; pointerId: number; fromId: string }
   | { kind: 'resize'; pointerId: number; id: string; startClientX: number; originWidth: number }
 
-export function Board({ initial, name }: { initial: BoardSnapshot; name: string }) {
+export function Board({
+  initial,
+  name,
+  offline = false,
+}: {
+  initial: BoardSnapshot
+  name: string
+  offline?: boolean
+}) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gesture = useRef<Gesture | null>(null)
@@ -63,7 +81,9 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   const editingRef = useRef<string | null>(null)
   const bitmapCache = useRef(new CardBitmapCache())
   const cardElementsRef = useRef<Record<string, HTMLElement | undefined>>({})
-  const sync = useBoardSync(initial, name)
+  const boardReadySent = useRef(false)
+  const boardInteractiveSent = useRef(false)
+  const sync = useBoardSync(initial, name, { offline })
   const syncRef = useRef(sync)
   syncRef.current = sync
   const { nodes, edges, peers, me, status } = sync
@@ -230,7 +250,44 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       editingId: editingRef.current,
       follows: followsFor(),
     })
+    if (BENCH.enabled) {
+      // Inter-frame delta keeps canvas and DOM comparable (not raw draw cost alone).
+      noteBenchFrame()
+      if (!boardReadySent.current && nodesRef.current.length > 0) {
+        boardReadySent.current = true
+        markBoardReady()
+        if (!boardInteractiveSent.current) {
+          boardInteractiveSent.current = true
+          requestAnimationFrame(() => markBoardInteractive())
+        }
+      }
+    }
   }
+
+  useEffect(() => {
+    if (!BENCH.enabled) return
+    setBenchRenderPath(HTML_IN_CANVAS ? 'html-in-canvas' : 'bitmap-fallback')
+    registerBenchDriver({
+      getPan: () => panRef.current,
+      setPan: (next) => {
+        panRef.current = next
+        setPan(next)
+      },
+      getZoom: () => zoomRef.current,
+      setZoom: (next) => {
+        const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
+        zoomRef.current = clamped
+        setZoom(clamped)
+      },
+      getFirstNodeId: () => nodesRef.current[0]?.id ?? null,
+      getNodeOrigin: (id) => {
+        const node = nodesRef.current.find((item) => item.id === id)
+        return node ? { x: node.x, y: node.y } : null
+      },
+      previewMove: (id, x, y) => syncRef.current.previewMove(id, x, y),
+    })
+    return () => registerBenchDriver(null)
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -767,7 +824,8 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
           </ul>
         </div>
         <Watermark />
-        {hintOpen ? (
+        {BENCH.enabled ? <BenchHud nodeCount={nodes.length} /> : null}
+        {hintOpen && !BENCH.enabled ? (
           <div className="hint" data-chrome>
             <p>
               {HTML_IN_CANVAS
