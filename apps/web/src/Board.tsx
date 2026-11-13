@@ -13,7 +13,7 @@ import { CARD_WIDTH, clampCardWidth } from './geometry'
 import { CardBitmapCache, type CardBitmap } from './htmlBitmap'
 import { asHtmlInCanvas, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas'
 import { HtmlEditor } from './HtmlEditor'
-import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
+import type { BoardEdge, BoardNode, BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
 
@@ -138,11 +138,12 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         element.style.width = `${width}px`
         element.style.maxWidth = `${width}px`
       }
+      // The drawable element is the whole card, so its offset includes the header.
       const measured = element
         ? Math.max(element.offsetHeight, element.scrollHeight)
-        : bitmapCache.current.measureBodyHeight(node.html, width)
-      const bodyHeight = Math.max(40, Math.ceil(measured))
-      const metric = { width, bodyHeight, height: BAR_HEIGHT + bodyHeight }
+        : BAR_HEIGHT + bitmapCache.current.measureBodyHeight(node.html, width)
+      const height = Math.max(BAR_HEIGHT + 40, Math.ceil(measured))
+      const metric = { width, bodyHeight: height - BAR_HEIGHT, height }
       const prev = nextMetrics[node.id]
       if (!prev || prev.width !== metric.width || prev.height !== metric.height) {
         changed = true
@@ -733,18 +734,12 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         >
           {HTML_IN_CANVAS
             ? nodes.map((node) => (
-                <div
+                <CardElement
                   key={node.id}
-                  // HTML-in-Canvas paint root for this card body.
-                  {...{ drawable: '' }}
-                  className="node-body card-drawable"
-                  data-card-id={node.id}
-                  style={{
-                    width: clampCardWidth(node.width ?? CARD_WIDTH),
-                    maxWidth: clampCardWidth(node.width ?? CARD_WIDTH),
-                  }}
-                  ref={(element) => setCardElement(node.id, element)}
-                  dangerouslySetInnerHTML={{ __html: node.html }}
+                  node={node}
+                  editing={editingId === node.id}
+                  follow={followFlags(node.id, edges)}
+                  elementRef={setCardElement}
                 />
               ))
             : null}
@@ -776,7 +771,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
           <div className="hint" data-chrome>
             <p>
               {HTML_IN_CANVAS
-                ? 'Card bodies are real HTML inside the canvas (HTML-in-Canvas / drawElementImage), sized in canvas-grid pixels so text fits across display densities.'
+                ? 'Each card, including its header and icons, is real HTML inside the canvas (HTML-in-Canvas / drawElementImage), sized in canvas-grid pixels so text fits across display densities.'
                 : 'Card HTML is rasterized onto the canvas when HTML-in-Canvas is unavailable.'}{' '}
               Write HTML in the panel to add a card. Drag a card to move it, the right edge to resize, a port to connect, a
               line to remove it, and empty space to pan. Use the pencil to edit, and + and − to zoom. Moves, resizes, and
@@ -789,6 +784,94 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         ) : null}
       </div>
     </div>
+  )
+}
+
+function followFlags(id: string, edges: BoardEdge[]) {
+  let incoming = false
+  let outgoing = false
+  for (const edge of edges) {
+    if (edge.from === id) outgoing = true
+    if (edge.to === id) incoming = true
+  }
+  return { in: incoming, out: outgoing }
+}
+
+type CardAction = 'follow-in' | 'follow-out' | 'center' | 'edit' | 'remove'
+
+function CardElement({
+  node,
+  editing,
+  follow,
+  elementRef,
+}: {
+  node: BoardNode
+  editing: boolean
+  follow: { in: boolean; out: boolean }
+  elementRef: (id: string, element: HTMLElement | null) => void
+}) {
+  const width = clampCardWidth(node.width ?? CARD_WIDTH)
+  const actions: CardAction[] = []
+  if (follow.in) actions.push('follow-in')
+  if (follow.out) actions.push('follow-out')
+  actions.push('center', 'edit', 'remove')
+  return (
+    <div
+      // HTML-in-Canvas paint root for the whole card, header included.
+      {...{ drawable: '' }}
+      className="card-drawable"
+      data-card-id={node.id}
+      style={{ width, maxWidth: width }}
+      ref={(element) => elementRef(node.id, element)}
+    >
+      <div className="card-bar">
+        <span className="card-grip" aria-hidden="true">
+          {[0, 1].flatMap((row) =>
+            [0, 1, 2].map((col) => (
+              <span key={`${row}-${col}`} style={{ left: 12 + col * 6, top: 11 + row * 4 }} />
+            )),
+          )}
+        </span>
+        <span className="card-actions">
+          {actions.map((kind) => (
+            <span key={kind} className={kind === 'edit' && editing ? 'card-action is-active' : 'card-action'}>
+              <CardIcon kind={kind} />
+            </span>
+          ))}
+        </span>
+      </div>
+      <div className="node-body" dangerouslySetInnerHTML={{ __html: node.html }} />
+    </div>
+  )
+}
+
+function CardIcon({ kind }: { kind: CardAction }) {
+  const common = {
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.4,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  }
+  return (
+    <svg viewBox="-8 -8 16 16" aria-hidden="true">
+      {kind === 'follow-in' ? (
+        <path {...common} d="M4 0 H-4 M-1 -4 L-4 0 L-1 4" />
+      ) : null}
+      {kind === 'follow-out' ? (
+        <path {...common} d="M-4 0 H4 M1 -4 L4 0 L1 4" />
+      ) : null}
+      {kind === 'center' ? (
+        <>
+          <circle {...common} cx="0" cy="0" r="2.2" />
+          <path {...common} d="M0 -6.4 V-4.2 M0 4.2 V6.4 M-6.4 0 H-4.2 M4.2 0 H6.4" />
+        </>
+      ) : null}
+      {kind === 'edit' ? (
+        <path {...common} d="M-4.2 4.2 V1.2 L3.2 -6.2 L6.2 -3.2 L-1.2 4.2 Z M1.2 -4.2 L4.2 -1.2" />
+      ) : null}
+      {kind === 'remove' ? <path {...common} d="M-4 -4 L4 4 M4 -4 L-4 4" /> : null}
+    </svg>
   )
 }
 

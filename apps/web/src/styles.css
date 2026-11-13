@@ -51,18 +51,83 @@ body {
   touch-action: none;
 }
 
-/* Drawable card bodies are DOM children of the canvas (visible in Elements).
-   content=drawable lays them out but paints via drawElementImage; updateElementGeometry
-   aligns DevTools / a11y boxes with the painted cards. pointer-events stay off so the
-   board canvas keeps owning pan/drag hit-testing. */
+/* The whole card — header, icons, and body — is one drawable child of the canvas.
+   content=drawable lays it out but paints via drawElementImage; updateElementGeometry
+   aligns DevTools / a11y boxes with the painted card. pointer-events stay off so the
+   board canvas keeps owning pan/drag hit-testing. Header height matches BAR_HEIGHT. */
 .board-canvas > .card-drawable {
   position: absolute;
   left: 0;
   top: 0;
+  display: flex;
+  flex-direction: column;
   pointer-events: none;
   box-sizing: border-box;
-  /* Opaque snapshot so this body covers text already painted by cards underneath. */
+  overflow: hidden;
+  border-radius: 12px;
   background: #fff;
+  color: var(--ink);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.card-bar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 28px;
+  height: 28px;
+  background: var(--blue);
+  color: #fff;
+}
+
+.card-grip {
+  position: relative;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 28px;
+}
+
+.card-grip span {
+  position: absolute;
+  width: 2.8px;
+  height: 2.8px;
+  margin: -1.4px 0 0 -1.4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.card-actions {
+  display: flex;
+  margin-left: auto;
+}
+
+.card-action {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #fff;
+}
+
+.card-action::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.card-action.is-active {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.card-action svg {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .card-measure-root {
@@ -74,6 +139,7 @@ body {
 }
 
 .node-body {
+  flex: 0 0 auto;
   padding: 20px 24px 24px;
   font-size: 21px;
   line-height: 1.45;

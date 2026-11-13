@@ -184,6 +184,30 @@ function drawIcon(
   ctx.restore()
 }
 
+function drawCardShadow(ctx: CanvasRenderingContext2D, node: BoardNode, metrics: CardMetrics) {
+  const { x, y } = node
+  const { width, height } = metrics
+  ctx.save()
+  ctx.shadowColor = 'rgba(0, 83, 159, 0.08)'
+  ctx.shadowBlur = 24
+  ctx.shadowOffsetY = 8
+  roundRect(ctx, x, y, width, height, RADIUS)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  ctx.restore()
+}
+
+function drawEditingRing(ctx: CanvasRenderingContext2D, node: BoardNode, metrics: CardMetrics) {
+  const { x, y } = node
+  const { width, height } = metrics
+  ctx.save()
+  roundRect(ctx, x - 3, y - 3, width + 6, height + 6, RADIUS + 2)
+  ctx.strokeStyle = '#00539f'
+  ctx.lineWidth = 2
+  ctx.stroke()
+  ctx.restore()
+}
+
 function drawCardShell(
   ctx: CanvasRenderingContext2D,
   node: BoardNode,
@@ -195,14 +219,7 @@ function drawCardShell(
   const { x, y } = node
   const { width, height } = metrics
 
-  ctx.save()
-  ctx.shadowColor = 'rgba(0, 83, 159, 0.08)'
-  ctx.shadowBlur = 24
-  ctx.shadowOffsetY = 8
-  roundRect(ctx, x, y, width, height, RADIUS)
-  ctx.fillStyle = '#ffffff'
-  ctx.fill()
-  ctx.restore()
+  drawCardShadow(ctx, node, metrics)
 
   ctx.save()
   roundRect(ctx, x, y, width, height, RADIUS)
@@ -246,14 +263,7 @@ function drawCardShell(
     drawIcon(ctx, slot.kind, slot.x + slot.w / 2, slot.y + slot.h / 2)
   }
 
-  if (editing) {
-    ctx.save()
-    roundRect(ctx, x - 3, y - 3, width + 6, height + 6, RADIUS + 2)
-    ctx.strokeStyle = '#00539f'
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.restore()
-  }
+  if (editing) drawEditingRing(ctx, node, metrics)
 }
 
 function drawCardPorts(ctx: CanvasRenderingContext2D, node: BoardNode, metrics: CardMetrics) {
@@ -319,25 +329,28 @@ function drawCardBody(
   const hic = asHtmlInCanvasContext(ctx)
 
   if (element && hic) {
-    // HTML-in-Canvas: dx/dy/dWidth/dHeight are canvas-grid pixels. Use an identity CTM so
-    // we do not also multiply by the board's DPR scale (that double-scaled text on Retina).
+    // The drawable is the whole card (header and body). dx/dy/dWidth/dHeight are
+    // canvas-grid pixels. Use an identity CTM so we do not also multiply by the
+    // board's DPR scale (that double-scaled text on Retina).
     ctx.save()
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    const topLeft = boardToGrid(pan, zoom, scaleX, scaleY, x, y + BAR_HEIGHT)
+    const topLeft = boardToGrid(pan, zoom, scaleX, scaleY, x, y)
     const native = getElementImageDefaultSize(ctx.canvas, element)
-    const srcH = liveBodyHeight(element, bodyHeight)
-    // Match the shell: authored CSS width × browser content height (device px via native).
+    const srcH = liveBodyHeight(element, metrics.height)
     const dw = width * scaleX * zoom
     const dh = (native?.height ?? srcH * scaleY) * zoom
     const radiusX = RADIUS * zoom * scaleX
     const radiusY = RADIUS * zoom * scaleY
     ctx.beginPath()
-    ctx.moveTo(topLeft.x, topLeft.y)
-    ctx.lineTo(topLeft.x + dw, topLeft.y)
+    ctx.moveTo(topLeft.x + radiusX, topLeft.y)
+    ctx.lineTo(topLeft.x + dw - radiusX, topLeft.y)
+    ctx.quadraticCurveTo(topLeft.x + dw, topLeft.y, topLeft.x + dw, topLeft.y + radiusY)
     ctx.lineTo(topLeft.x + dw, topLeft.y + dh - radiusY)
     ctx.quadraticCurveTo(topLeft.x + dw, topLeft.y + dh, topLeft.x + dw - radiusX, topLeft.y + dh)
     ctx.lineTo(topLeft.x + radiusX, topLeft.y + dh)
     ctx.quadraticCurveTo(topLeft.x, topLeft.y + dh, topLeft.x, topLeft.y + dh - radiusY)
+    ctx.lineTo(topLeft.x, topLeft.y + radiusY)
+    ctx.quadraticCurveTo(topLeft.x, topLeft.y, topLeft.x + radiusX, topLeft.y)
     ctx.closePath()
     ctx.clip()
     try {
@@ -345,21 +358,11 @@ function drawCardBody(
       // highlights the painted card, not the CSS box at the canvas origin.
       hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh)
     } catch {
-      if (bitmap) ctx.drawImage(bitmap.canvas, topLeft.x, topLeft.y, dw, dh)
-      else {
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(topLeft.x, topLeft.y, dw, dh)
-      }
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(topLeft.x, topLeft.y, dw, dh)
     }
-    // Explicit CSS-pixel transform: board pan/zoom place the element's border box on the canvas.
-    syncElementGeometry(
-      ctx.canvas,
-      element,
-      pan.x + x * zoom,
-      pan.y + (y + BAR_HEIGHT) * zoom,
-      zoom,
-      zoom,
-    )
+    // Explicit CSS-pixel transform: board pan/zoom place the card's border box on the canvas.
+    syncElementGeometry(ctx.canvas, element, pan.x + x * zoom, pan.y + y * zoom, zoom, zoom)
     ctx.restore()
     return
   }
@@ -516,36 +519,34 @@ export function drawBoard(options: {
     const element = elements?.[node.id]
     if (!element) return base
     const native = getElementImageDefaultSize(ctx.canvas, element)
-    // Keep authored card width; height follows the browser's device-pixel content box.
-    const bodyHeight = native
-      ? Math.max(40, Math.round(native.height / scaleY))
-      : liveBodyHeight(element, base.bodyHeight)
-    if (bodyHeight === base.bodyHeight) return base
-    return { width: base.width, bodyHeight, height: BAR_HEIGHT + bodyHeight }
+    // The drawable is the whole card, so its image height already includes the header.
+    const height = native
+      ? Math.max(BAR_HEIGHT + 40, Math.round(native.height / scaleY))
+      : Math.max(BAR_HEIGHT + 40, liveBodyHeight(element, base.height))
+    const bodyHeight = height - BAR_HEIGHT
+    if (height === base.height && bodyHeight === base.bodyHeight) return base
+    return { width: base.width, bodyHeight, height }
   }
 
-  // Paint each card completely before the next. HTML-in-Canvas text is real element
-  // paint; a shell drawn only in an earlier pass cannot cover it. Later cards in
-  // the list sit on top, matching hit testing.
+  // Paint each card completely before the next so a card in front covers the one
+  // underneath. Later cards in the list sit on top, matching hit testing.
   for (const node of nodes) {
     applyBoardTransform()
     const metric = metricsFor(node)
-    const follow = follows[node.id] ?? { in: false, out: false }
-    drawCardShell(ctx, node, metric, editingId === node.id, follow.in, follow.out)
-    drawCardBody(
-      ctx,
-      node,
-      metric,
-      bitmaps[node.id],
-      hic ? elements?.[node.id] : undefined,
-      pan,
-      zoom,
-      scaleX,
-      scaleY,
-    )
-    // Body drawing may leave an identity transform. Ports and the next shell
-    // are in board space.
-    applyBoardTransform()
+    const element = hic ? elements?.[node.id] : undefined
+    if (element) {
+      // Header, icons, and body are one HTML element. The canvas only adds the
+      // drop shadow, the editing ring, and the ports that sit on the card edge.
+      drawCardShadow(ctx, node, metric)
+      drawCardBody(ctx, node, metric, bitmaps[node.id], element, pan, zoom, scaleX, scaleY)
+      applyBoardTransform()
+      if (editingId === node.id) drawEditingRing(ctx, node, metric)
+    } else {
+      const follow = follows[node.id] ?? { in: false, out: false }
+      drawCardShell(ctx, node, metric, editingId === node.id, follow.in, follow.out)
+      drawCardBody(ctx, node, metric, bitmaps[node.id], undefined, pan, zoom, scaleX, scaleY)
+      applyBoardTransform()
+    }
     drawCardPorts(ctx, node, metric)
   }
 
