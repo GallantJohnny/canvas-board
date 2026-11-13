@@ -1,8 +1,21 @@
 import { fanout } from './liveBus.js'
+import {
+  memoryAnnouncePeers,
+  memoryCommitOp,
+  memoryDropPresence,
+  memoryGetSnapshot,
+  memoryListPeers,
+  memoryReplaceBoard,
+  memoryTouchPresence,
+} from './memoryStore.js'
 import { applyOp, normalizeCardWidth, parseOp } from './ops.js'
 import { getRedis } from './redis.js'
 import { createSeed } from './seed.js'
 import type { Board, BoardOp, BoardSnapshot, Peer } from './types.js'
+
+function useMemory() {
+  return !process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN
+}
 
 const SNAPSHOT = 'board:snapshot'
 const OPS = 'board:ops'
@@ -69,12 +82,14 @@ async function ensureSnapshot(): Promise<BoardSnapshot> {
 }
 
 export async function getSnapshot(): Promise<BoardSnapshot> {
+  if (useMemory()) return memoryGetSnapshot()
   const existing = await loadSnapshot()
   if (existing) return existing
   return withLock(ensureSnapshot)
 }
 
 export async function commitOp(op: BoardOp, clientId: string, opId: string): Promise<BoardSnapshot | null> {
+  if (useMemory()) return memoryCommitOp(op, clientId, opId)
   const committed = await withLock(async () => {
     const current = await ensureSnapshot()
     const next = applyOp(current, op)
@@ -98,6 +113,7 @@ export async function commitOp(op: BoardOp, clientId: string, opId: string): Pro
 }
 
 export async function replaceBoard(next: Board): Promise<BoardSnapshot> {
+  if (useMemory()) return memoryReplaceBoard(next)
   const snapshot = await withLock(async () => {
     const current = await ensureSnapshot()
     const stored: BoardSnapshot = { revision: current.revision + 1, nodes: next.nodes, edges: next.edges }
@@ -109,6 +125,7 @@ export async function replaceBoard(next: Board): Promise<BoardSnapshot> {
 }
 
 export async function touchPresence(peer: Peer): Promise<void> {
+  if (useMemory()) return memoryTouchPresence(peer)
   const redis = getRedis()
   await Promise.all([
     redis.set(presenceKey(peer.clientId), peer, { ex: PRESENCE_TTL_SECONDS }),
@@ -117,11 +134,13 @@ export async function touchPresence(peer: Peer): Promise<void> {
 }
 
 export async function dropPresence(clientId: string): Promise<void> {
+  if (useMemory()) return memoryDropPresence(clientId)
   const redis = getRedis()
   await Promise.all([redis.del(presenceKey(clientId)), redis.srem(PRESENCE_IDS, clientId)])
 }
 
 export async function listPeers(): Promise<Peer[]> {
+  if (useMemory()) return memoryListPeers()
   const redis = getRedis()
   const ids = await redis.smembers(PRESENCE_IDS)
   if (ids.length === 0) return []
@@ -138,6 +157,7 @@ export async function listPeers(): Promise<Peer[]> {
 }
 
 export async function announcePeers(): Promise<Peer[]> {
+  if (useMemory()) return memoryAnnouncePeers()
   const peers = await listPeers()
   await fanout({ kind: 'peers', peers })
   return peers

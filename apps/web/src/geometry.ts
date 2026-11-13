@@ -18,7 +18,17 @@ export function anchor(node: BoardNode, size: Size | undefined, side: 'left' | '
   }
 }
 
-export function curve(x1: number, y1: number, x2: number, y2: number) {
+export function curvePoints(x1: number, y1: number, x2: number, y2: number) {
   const bend = Math.max(48, Math.abs(x2 - x1) * 0.45)
-  return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`
+  return {
+    c1x: x1 + bend,
+    c1y: y1,
+    c2x: x2 - bend,
+    c2y: y2,
+  }
+}
+
+export function curve(x1: number, y1: number, x2: number, y2: number) {
+  const { c1x, c1y, c2x, c2y } = curvePoints(x1, y1, x2, y2)
+  return `M ${x1} ${y1} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${x2} ${y2}`
 }
