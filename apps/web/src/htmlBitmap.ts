@@ -78,7 +78,7 @@ function drawFallback(ctx: CanvasRenderingContext2D, html: string, width: number
 }
 
 async function rasterize(html: string, width: number, height: number): Promise<HTMLCanvasElement> {
-  const dpr = Math.min(2, window.devicePixelRatio || 1)
+  const dpr = window.devicePixelRatio || 1
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(width * dpr))
   canvas.height = Math.max(1, Math.round(height * dpr))
@@ -116,10 +116,10 @@ export class CardBitmapCache {
     const root = ensureMeasureRoot()
     const el = document.createElement('div')
     el.className = 'node-body'
-    el.style.width = `${width}px`
+    el.setAttribute('style', `${BODY_CSS};width:${width}px`)
     el.innerHTML = html
     root.appendChild(el)
-    const height = Math.max(40, el.offsetHeight)
+    const height = Math.max(40, Math.ceil(Math.max(el.offsetHeight, el.scrollHeight)))
     el.remove()
     return height
   }

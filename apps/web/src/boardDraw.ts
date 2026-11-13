@@ -184,19 +184,16 @@ function drawIcon(
   ctx.restore()
 }
 
-function drawCard(
+function drawCardShell(
   ctx: CanvasRenderingContext2D,
   node: BoardNode,
   metrics: CardMetrics,
-  bitmap: CardBitmap | undefined,
-  element: HTMLElement | undefined,
   editing: boolean,
   canFollowIn: boolean,
   canFollowOut: boolean,
 ) {
   const { x, y } = node
-  const { width, height, bodyHeight } = metrics
-  const hic = asHtmlInCanvasContext(ctx)
+  const { width, height } = metrics
 
   ctx.save()
   ctx.shadowColor = 'rgba(0, 83, 159, 0.08)'
@@ -249,27 +246,6 @@ function drawCard(
     drawIcon(ctx, slot.kind, slot.x + slot.w / 2, slot.y + slot.h / 2)
   }
 
-  if (element && hic) {
-    // Prefer Chrome's HTML-in-Canvas path: live DOM subtree → canvas pixels.
-    // Keep board hit-testing (preserveElementGeometry) so drag/pan stay canvas-owned.
-    try {
-      hic.drawElementImage(element, x, y + BAR_HEIGHT, {
-        preserveElementGeometry: true,
-      })
-    } catch {
-      if (bitmap) ctx.drawImage(bitmap.canvas, x, y + BAR_HEIGHT, width, bodyHeight)
-      else {
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(x, y + BAR_HEIGHT, width, bodyHeight)
-      }
-    }
-  } else if (bitmap) {
-    ctx.drawImage(bitmap.canvas, x, y + BAR_HEIGHT, width, bodyHeight)
-  } else {
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(x, y + BAR_HEIGHT, width, bodyHeight)
-  }
-
   if (editing) {
     ctx.save()
     roundRect(ctx, x - 3, y - 3, width + 6, height + 6, RADIUS + 2)
@@ -278,6 +254,11 @@ function drawCard(
     ctx.stroke()
     ctx.restore()
   }
+}
+
+function drawCardPorts(ctx: CanvasRenderingContext2D, node: BoardNode, metrics: CardMetrics) {
+  const { x, y } = node
+  const { width, height } = metrics
 
   ctx.fillStyle = '#00539f'
   ctx.beginPath()
@@ -300,6 +281,78 @@ function drawCard(
   ctx.moveTo(x + width - 6, y + height / 2 - 7)
   ctx.lineTo(x + width - 6, y + height / 2 + 7)
   ctx.stroke()
+}
+
+/** Map board CSS coords through pan/zoom into canvas-grid pixels (HTML-in-Canvas units). */
+function boardToGrid(
+  pan: Pan,
+  zoom: number,
+  scaleX: number,
+  scaleY: number,
+  x: number,
+  y: number,
+) {
+  return {
+    x: (pan.x + x * zoom) * scaleX,
+    y: (pan.y + y * zoom) * scaleY,
+  }
+}
+
+function drawCardBody(
+  ctx: CanvasRenderingContext2D,
+  node: BoardNode,
+  metrics: CardMetrics,
+  bitmap: CardBitmap | undefined,
+  element: HTMLElement | undefined,
+  pan: Pan,
+  zoom: number,
+  scaleX: number,
+  scaleY: number,
+) {
+  const { x, y } = node
+  const { width, bodyHeight } = metrics
+  const hic = asHtmlInCanvasContext(ctx)
+
+  if (element && hic) {
+    // drawElementImage dx/dy/dWidth/dHeight are canvas-grid pixels and must NOT also go
+    // through a DPR transform — that double-scales HTML on Retina and overflows the card.
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    const topLeft = boardToGrid(pan, zoom, scaleX, scaleY, x, y + BAR_HEIGHT)
+    const dw = width * zoom * scaleX
+    const dh = bodyHeight * zoom * scaleY
+    const radiusX = RADIUS * zoom * scaleX
+    const radiusY = RADIUS * zoom * scaleY
+    ctx.beginPath()
+    ctx.moveTo(topLeft.x, topLeft.y)
+    ctx.lineTo(topLeft.x + dw, topLeft.y)
+    ctx.lineTo(topLeft.x + dw, topLeft.y + dh - radiusY)
+    ctx.quadraticCurveTo(topLeft.x + dw, topLeft.y + dh, topLeft.x + dw - radiusX, topLeft.y + dh)
+    ctx.lineTo(topLeft.x + radiusX, topLeft.y + dh)
+    ctx.quadraticCurveTo(topLeft.x, topLeft.y + dh, topLeft.x, topLeft.y + dh - radiusY)
+    ctx.closePath()
+    ctx.clip()
+    try {
+      hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh, {
+        preserveElementGeometry: true,
+      })
+    } catch {
+      if (bitmap) ctx.drawImage(bitmap.canvas, topLeft.x, topLeft.y, dw, dh)
+      else {
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(topLeft.x, topLeft.y, dw, dh)
+      }
+    }
+    ctx.restore()
+    return
+  }
+
+  if (bitmap) {
+    ctx.drawImage(bitmap.canvas, x, y + BAR_HEIGHT, width, bodyHeight)
+    return
+  }
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(x, y + BAR_HEIGHT, width, bodyHeight)
 }
 
 function drawCursor(ctx: CanvasRenderingContext2D, peer: Peer) {
@@ -332,6 +385,7 @@ export function drawBoard(options: {
   width: number
   height: number
   dpr: number
+  scaleY?: number
   pan: Pan
   zoom: number
   nodes: BoardNode[]
@@ -365,12 +419,14 @@ export function drawBoard(options: {
     editingId,
     follows,
   } = options
+  const scaleX = dpr
+  const scaleY = options.scaleY ?? dpr
 
   // Clear the full backing store in device pixels, then draw in CSS pixels × dpr.
   // Skipping either step leaves trails (“ghost cards”) when the board pans or a card moves.
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0)
   ctx.fillStyle = '#f4f7fb'
   ctx.fillRect(0, 0, width, height)
 
@@ -386,7 +442,7 @@ export function drawBoard(options: {
     }
   }
 
-  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, pan.x * dpr, pan.y * dpr)
+  ctx.setTransform(scaleX * zoom, 0, 0, scaleY * zoom, pan.x * scaleX, pan.y * scaleY)
 
   const byId = new Map(nodes.map((node) => [node.id, node]))
   for (const edge of edges) {
@@ -421,19 +477,31 @@ export function drawBoard(options: {
     }
   }
 
+  const hic = asHtmlInCanvasContext(ctx)
+
   for (const node of nodes) {
     const metric = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
     const follow = follows[node.id] ?? { in: false, out: false }
-    drawCard(
-      ctx,
-      node,
-      metric,
-      bitmaps[node.id],
-      elements?.[node.id],
-      editingId === node.id,
-      follow.in,
-      follow.out,
-    )
+    drawCardShell(ctx, node, metric, editingId === node.id, follow.in, follow.out)
+    // Bitmap fallback draws in the current board transform (CSS × scale × zoom).
+    if (!hic || !elements?.[node.id]) {
+      drawCardBody(ctx, node, metric, bitmaps[node.id], undefined, pan, zoom, scaleX, scaleY)
+      drawCardPorts(ctx, node, metric)
+    }
+  }
+
+  // HTML-in-Canvas bodies need identity transform + canvas-grid destinations.
+  if (hic && elements) {
+    for (const node of nodes) {
+      const metric = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
+      drawCardBody(ctx, node, metric, bitmaps[node.id], elements[node.id], pan, zoom, scaleX, scaleY)
+    }
+    // Restore board transform for ports and cursors drawn in board space.
+    ctx.setTransform(scaleX * zoom, 0, 0, scaleY * zoom, pan.x * scaleX, pan.y * scaleY)
+    for (const node of nodes) {
+      const metric = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
+      drawCardPorts(ctx, node, metric)
+    }
   }
 
   for (const peer of peers) {

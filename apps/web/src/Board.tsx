@@ -122,10 +122,11 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     for (const node of nodesRef.current) {
       const width = clampCardWidth(node.width ?? CARD_WIDTH)
       const element = cardElementsRef.current[node.id]
-      const bodyHeight = Math.max(
-        40,
-        element?.offsetHeight || bitmapCache.current.measureBodyHeight(node.html, width),
-      )
+      // Prefer the live drawable's laid-out size; ceil so subpixels never undersize the shell.
+      const measured = element
+        ? Math.max(element.offsetHeight, element.scrollHeight)
+        : bitmapCache.current.measureBodyHeight(node.html, width)
+      const bodyHeight = Math.max(40, Math.ceil(measured))
       const metric = cardMetrics(node, undefined, bodyHeight)
       const prev = nextMetrics[node.id]
       if (!prev || prev.width !== metric.width || prev.height !== metric.height) {
@@ -166,16 +167,22 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     const viewport = viewportRef.current
     if (!canvas || !viewport) return null
     const rect = viewport.getBoundingClientRect()
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    const width = Math.max(1, Math.round(rect.width))
-    const height = Math.max(1, Math.round(rect.height))
-    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
-      canvas.width = Math.round(width * dpr)
-      canvas.height = Math.round(height * dpr)
+    const width = Math.max(1, rect.width)
+    const height = Math.max(1, rect.height)
+    // Match canvas grid to device pixels (no DPR cap) so HTML-in-Canvas scale matches the shell.
+    const dpr = window.devicePixelRatio || 1
+    const gridW = Math.max(1, Math.round(width * dpr))
+    const gridH = Math.max(1, Math.round(height * dpr))
+    if (canvas.width !== gridW || canvas.height !== gridH) {
+      canvas.width = gridW
+      canvas.height = gridH
       canvas.style.width = `${width}px`
       canvas.style.height = `${height}px`
     }
-    return { canvas, width, height, dpr }
+    // Use the real grid/CSS ratio so rounding on high-DPR displays does not skew HTML size.
+    const scaleX = canvas.width / width
+    const scaleY = canvas.height / height
+    return { canvas, width, height, dpr: scaleX, scaleY }
   }
 
   const paint = () => {
@@ -189,6 +196,7 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       width: sized.width,
       height: sized.height,
       dpr: sized.dpr,
+      scaleY: sized.scaleY,
       pan: panRef.current,
       zoom: zoomRef.current,
       nodes: nodesRef.current,
