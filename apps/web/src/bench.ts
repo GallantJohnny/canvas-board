@@ -414,3 +414,25 @@ function percentile(sorted: number[], p: number) {
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))
   return sorted[index] ?? 0
 }
+
+declare global {
+  interface Window {
+    __BENCH__?: {
+      runAll: typeof runAllBenchScenarios
+      runOne: typeof runBenchScenario
+      export: typeof buildBenchExport
+      getState: typeof getBenchHudState
+      config: typeof parseBenchConfig
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.__BENCH__ = {
+    runAll: runAllBenchScenarios,
+    runOne: runBenchScenario,
+    export: buildBenchExport,
+    getState: getBenchHudState,
+    config: parseBenchConfig,
+  }
+}
