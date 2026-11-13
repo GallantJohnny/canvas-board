@@ -1,27 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Board } from './Board'
-import { createBenchSnapshot, markBoardData, parseBenchConfig } from './bench'
 import type { BoardSnapshot } from './types'
 import { savedName } from './useBoardSync'
 
 export function App() {
-  const bench = parseBenchConfig()
   const [board, setBoard] = useState<BoardSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [attempt, setAttempt] = useState(0)
-  const [name, setName] = useState<string | null>(() => (bench.enabled ? 'Bench' : savedName()))
+  const [name, setName] = useState<string | null>(() => savedName())
 
   useEffect(() => {
-    if (bench.enabled) {
-      const snapshot = createBenchSnapshot(bench.n, bench.html)
-      setBoard(snapshot)
-      setLoading(false)
-      setError(null)
-      markBoardData()
-      return
-    }
-
     const controller = new AbortController()
     setLoading(true)
     setError(null)
@@ -40,7 +29,6 @@ export function App() {
       .then((data) => {
         setBoard(data)
         setLoading(false)
-        markBoardData()
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -49,7 +37,7 @@ export function App() {
         setError(err instanceof Error ? err.message : 'Could not load the board')
       })
     return () => controller.abort()
-  }, [attempt, bench.enabled, bench.n, bench.html])
+  }, [attempt])
 
   if (loading && !board) {
     return (
@@ -75,7 +63,7 @@ export function App() {
 
   if (!name) return <NamePrompt onJoin={setName} />
 
-  return <Board initial={board} name={name} offline={bench.enabled} />
+  return <Board initial={board} name={name} />
 }
 
 function NamePrompt({ onJoin }: { onJoin: (name: string) => void }) {

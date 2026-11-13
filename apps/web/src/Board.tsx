@@ -1,13 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { BenchHud } from './BenchHud'
-import {
-  markBoardInteractive,
-  markBoardReady,
-  noteBenchFrame,
-  parseBenchConfig,
-  registerBenchDriver,
-  setBenchRenderPath,
-} from './bench'
 import { Edges } from './Edges'
 import { anchor, CARD_WIDTH, clampCardWidth } from './geometry'
 import { HtmlEditor } from './HtmlEditor'
@@ -15,8 +6,6 @@ import { NodeCard } from './NodeCard'
 import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
-
-const BENCH = parseBenchConfig()
 
 const STAGGER = 24
 const TAG_ERROR = 'The card has to be defined with HTML tags.'
@@ -49,15 +38,7 @@ type Gesture =
   | { kind: 'connect'; pointerId: number; fromId: string }
   | { kind: 'resize'; pointerId: number; id: string; startClientX: number; originWidth: number }
 
-export function Board({
-  initial,
-  name,
-  offline = false,
-}: {
-  initial: BoardSnapshot
-  name: string
-  offline?: boolean
-}) {
+export function Board({ initial, name }: { initial: BoardSnapshot; name: string }) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const panRef = useRef<Pan>({ x: 0, y: 0 })
@@ -65,14 +46,10 @@ export function Board({
   const placeStep = useRef(0)
   const centerToken = useRef(0)
   const followStep = useRef<Record<string, number>>({})
-  const nodesRef = useRef(initial.nodes)
-  const boardReadySent = useRef(false)
-  const boardInteractiveSent = useRef(false)
-  const sync = useBoardSync(initial, name, { offline })
+  const sync = useBoardSync(initial, name)
   const syncRef = useRef(sync)
   syncRef.current = sync
   const { nodes, edges, peers, me, status } = sync
-  nodesRef.current = nodes
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [sizes, setSizes] = useState<Record<string, Size>>({})
@@ -87,50 +64,6 @@ export function Board({
 
   panRef.current = pan
   zoomRef.current = zoom
-
-  useEffect(() => {
-    if (!BENCH.enabled) return
-    setBenchRenderPath('dom')
-    registerBenchDriver({
-      getPan: () => panRef.current,
-      setPan: (next) => {
-        panRef.current = next
-        setPan(next)
-      },
-      getZoom: () => zoomRef.current,
-      setZoom: (next) => {
-        const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
-        zoomRef.current = clamped
-        setZoom(clamped)
-      },
-      getFirstNodeId: () => nodesRef.current[0]?.id ?? null,
-      getNodeOrigin: (id) => {
-        const node = nodesRef.current.find((item) => item.id === id)
-        return node ? { x: node.x, y: node.y } : null
-      },
-      previewMove: (id, x, y) => syncRef.current.previewMove(id, x, y),
-    })
-    return () => registerBenchDriver(null)
-  }, [])
-
-  useEffect(() => {
-    if (!BENCH.enabled) return
-    let frame = 0
-    const tick = () => {
-      noteBenchFrame()
-      if (!boardReadySent.current && nodesRef.current.length > 0) {
-        boardReadySent.current = true
-        markBoardReady()
-        if (!boardInteractiveSent.current) {
-          boardInteractiveSent.current = true
-          requestAnimationFrame(() => markBoardInteractive())
-        }
-      }
-      frame = requestAnimationFrame(tick)
-    }
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
-  }, [])
 
   const toBoard = useCallback((clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
@@ -594,8 +527,7 @@ export function Board({
           </ul>
         </div>
         <Watermark />
-        {BENCH.enabled ? <BenchHud nodeCount={nodes.length} /> : null}
-        {hintOpen && !BENCH.enabled ? (
+        {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
               Write HTML in the panel to add a card. Use the card control to remove one, the center control to bring
