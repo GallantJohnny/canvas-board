@@ -471,7 +471,10 @@ export function drawBoard(options: {
     }
   }
 
-  ctx.setTransform(scaleX * zoom, 0, 0, scaleY * zoom, pan.x * scaleX, pan.y * scaleY)
+  const applyBoardTransform = () => {
+    ctx.setTransform(scaleX * zoom, 0, 0, scaleY * zoom, pan.x * scaleX, pan.y * scaleY)
+  }
+  applyBoardTransform()
 
   const byId = new Map(nodes.map((node) => [node.id, node]))
   for (const edge of edges) {
@@ -521,30 +524,32 @@ export function drawBoard(options: {
     return { width: base.width, bodyHeight, height: BAR_HEIGHT + bodyHeight }
   }
 
+  // Paint each card completely before the next. HTML-in-Canvas text is real element
+  // paint; a shell drawn only in an earlier pass cannot cover it. Later cards in
+  // the list sit on top, matching hit testing.
   for (const node of nodes) {
+    applyBoardTransform()
     const metric = metricsFor(node)
     const follow = follows[node.id] ?? { in: false, out: false }
     drawCardShell(ctx, node, metric, editingId === node.id, follow.in, follow.out)
-    // Bitmap fallback draws in the current board transform (CSS × scale × zoom).
-    if (!hic || !elements?.[node.id]) {
-      drawCardBody(ctx, node, metric, bitmaps[node.id], undefined, pan, zoom, scaleX, scaleY)
-      drawCardPorts(ctx, node, metric)
-    }
+    drawCardBody(
+      ctx,
+      node,
+      metric,
+      bitmaps[node.id],
+      hic ? elements?.[node.id] : undefined,
+      pan,
+      zoom,
+      scaleX,
+      scaleY,
+    )
+    // Body drawing may leave an identity transform. Ports and the next shell
+    // are in board space.
+    applyBoardTransform()
+    drawCardPorts(ctx, node, metric)
   }
 
-  // HTML-in-Canvas bodies need identity transform + canvas-grid destinations.
-  if (hic && elements) {
-    for (const node of nodes) {
-      const metric = metricsFor(node)
-      drawCardBody(ctx, node, metric, bitmaps[node.id], elements[node.id], pan, zoom, scaleX, scaleY)
-    }
-    // Restore board transform for ports and cursors drawn in board space.
-    ctx.setTransform(scaleX * zoom, 0, 0, scaleY * zoom, pan.x * scaleX, pan.y * scaleY)
-    for (const node of nodes) {
-      drawCardPorts(ctx, node, metricsFor(node))
-    }
-  }
-
+  applyBoardTransform()
   for (const peer of peers) {
     if (peer.clientId === meId) continue
     drawCursor(ctx, peer)
