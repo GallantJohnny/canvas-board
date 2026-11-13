@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
+  BAR_HEIGHT,
   cardMetrics,
   drawBoard,
   hitTest,
@@ -16,7 +17,11 @@ import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
 
-const HTML_IN_CANVAS = supportsHtmlInCanvas()
+// Prefer the bitmap rasterizer for card bodies: HTML-in-Canvas default sizes are in
+// device pixels and are easy to double-scale against our board CTM, which overflows or
+// garbles text across DPR differences (Windows vs macOS Retina). Keep detection for a
+// future path, but paint cards through htmlBitmap until that integration is solid.
+const HTML_IN_CANVAS = false && supportsHtmlInCanvas()
 
 const STAGGER = 24
 const TAG_ERROR = 'The card has to be defined with HTML tags.'
@@ -104,8 +109,10 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     cardElementsRef.current[id] = element
   }
 
-  const syncDrawableMetrics = () => {
-    if (!HTML_IN_CANVAS) return
+  /** Update layout refs only — never setState from the paint path (that re-renders drawable
+   * DOM mid-frame and corrupts HTML-in-Canvas text). */
+  const syncDrawableMetrics = (publish = false) => {
+    if (!HTML_IN_CANVAS) return false
     const nextSizes: Record<string, Size> = { ...sizesRef.current }
     const nextMetrics: Record<string, CardMetrics> = { ...metricsRef.current }
     const liveIds = new Set(nodesRef.current.map((node) => node.id))
@@ -122,12 +129,15 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     for (const node of nodesRef.current) {
       const width = clampCardWidth(node.width ?? CARD_WIDTH)
       const element = cardElementsRef.current[node.id]
-      // Prefer the live drawable's laid-out size; ceil so subpixels never undersize the shell.
+      if (element) {
+        element.style.width = `${width}px`
+        element.style.maxWidth = `${width}px`
+      }
       const measured = element
         ? Math.max(element.offsetHeight, element.scrollHeight)
         : bitmapCache.current.measureBodyHeight(node.html, width)
       const bodyHeight = Math.max(40, Math.ceil(measured))
-      const metric = cardMetrics(node, undefined, bodyHeight)
+      const metric = { width, bodyHeight, height: BAR_HEIGHT + bodyHeight }
       const prev = nextMetrics[node.id]
       if (!prev || prev.width !== metric.width || prev.height !== metric.height) {
         changed = true
@@ -136,11 +146,13 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
       nextSizes[node.id] = { width: metric.width, height: metric.height }
     }
 
-    if (!changed) return
     sizesRef.current = nextSizes
     metricsRef.current = nextMetrics
-    setSizes(nextSizes)
-    setMetrics(nextMetrics)
+    if (publish && changed) {
+      setSizes(nextSizes)
+      setMetrics(nextMetrics)
+    }
+    return changed
   }
 
   const toBoard = (clientX: number, clientY: number) => {
@@ -188,7 +200,8 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
   const paint = () => {
     const sized = ensureCanvasSize()
     if (!sized) return
-    syncDrawableMetrics()
+    // Refs only — publishing React state here re-renders drawable children mid-paint.
+    syncDrawableMetrics(false)
     const ctx = sized.canvas.getContext('2d')
     if (!ctx) return
     drawBoard({
@@ -256,8 +269,11 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
 
   useEffect(() => {
     if (HTML_IN_CANVAS) {
-      syncDrawableMetrics()
-      asHtmlInCanvas(canvasRef.current)?.requestPaint()
+      // Publish metrics after DOM commit / node changes — not from the paint loop.
+      requestAnimationFrame(() => {
+        syncDrawableMetrics(true)
+        asHtmlInCanvas(canvasRef.current)?.requestPaint()
+      })
       return
     }
 
@@ -718,7 +734,10 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
                   {...{ drawable: '' }}
                   className="node-body card-drawable"
                   data-card-id={node.id}
-                  style={{ width: clampCardWidth(node.width ?? CARD_WIDTH) }}
+                  style={{
+                    width: clampCardWidth(node.width ?? CARD_WIDTH),
+                    maxWidth: clampCardWidth(node.width ?? CARD_WIDTH),
+                  }}
                   ref={(element) => setCardElement(node.id, element)}
                   dangerouslySetInnerHTML={{ __html: node.html }}
                 />
@@ -751,11 +770,9 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
-              {HTML_IN_CANVAS
-                ? 'Card HTML is live DOM drawn with the HTML-in-Canvas API (drawElementImage).'
-                : 'Card HTML is rasterized onto the canvas when HTML-in-Canvas is unavailable.'}{' '}
-              Write HTML in the panel to add a card. Drag a card to move it, the right edge to resize, a port to
-              connect, a line to remove it, and empty space to pan. Use the pencil to edit, and + and − to zoom. Moves,
+              Card HTML is measured and painted onto the board canvas so text stays inside each card across display
+              densities. Write HTML in the panel to add a card. Drag a card to move it, the right edge to resize, a port
+              to connect, a line to remove it, and empty space to pan. Use the pencil to edit, and + and − to zoom. Moves,
               resizes, and edits are shared.
             </p>
             <button type="button" className="hint-dismiss" aria-label="Dismiss note" onClick={() => setHintOpen(false)}>

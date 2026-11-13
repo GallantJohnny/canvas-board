@@ -298,6 +298,11 @@ function boardToGrid(
   }
 }
 
+export function liveBodyHeight(element: HTMLElement | undefined, fallback: number) {
+  if (!element) return fallback
+  return Math.max(40, Math.ceil(Math.max(element.offsetHeight, element.scrollHeight)))
+}
+
 function drawCardBody(
   ctx: CanvasRenderingContext2D,
   node: BoardNode,
@@ -314,13 +319,21 @@ function drawCardBody(
   const hic = asHtmlInCanvasContext(ctx)
 
   if (element && hic) {
-    // drawElementImage dx/dy/dWidth/dHeight are canvas-grid pixels and must NOT also go
-    // through a DPR transform — that double-scales HTML on Retina and overflows the card.
+    // Identity transform + canvas-grid destinations (Chrome HTML-in-Canvas units).
+    // Destination size is the element's own layout × zoom × scale — never a smaller shell
+    // metric, which would squash lines on top of each other on high-DPR displays.
     ctx.save()
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     const topLeft = boardToGrid(pan, zoom, scaleX, scaleY, x, y + BAR_HEIGHT)
-    const dw = width * zoom * scaleX
-    const dh = bodyHeight * zoom * scaleY
+    const canvasEl = ctx.canvas as HTMLCanvasElement & {
+      getElementImageDefaultSize?: (el: Element) => { width: number; height: number }
+    }
+    const native = canvasEl.getElementImageDefaultSize?.(element)
+    const srcW = Math.max(1, element.offsetWidth || width)
+    const srcH = liveBodyHeight(element, bodyHeight)
+    // Prefer the browser's default device-pixel size; fall back to CSS × scale.
+    const dw = (native?.width ?? srcW * scaleX) * zoom
+    const dh = (native?.height ?? srcH * scaleY) * zoom
     const radiusX = RADIUS * zoom * scaleX
     const radiusY = RADIUS * zoom * scaleY
     ctx.beginPath()
@@ -333,14 +346,20 @@ function drawCardBody(
     ctx.closePath()
     ctx.clip()
     try {
+      // preserveElementGeometry: do not move the off-screen DOM node onto the card;
+      // board pointer hit-testing stays canvas-owned.
       hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh, {
         preserveElementGeometry: true,
       })
     } catch {
-      if (bitmap) ctx.drawImage(bitmap.canvas, topLeft.x, topLeft.y, dw, dh)
-      else {
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(topLeft.x, topLeft.y, dw, dh)
+      try {
+        hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh)
+      } catch {
+        if (bitmap) ctx.drawImage(bitmap.canvas, topLeft.x, topLeft.y, dw, dh)
+        else {
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(topLeft.x, topLeft.y, dw, dh)
+        }
       }
     }
     ctx.restore()
@@ -348,7 +367,19 @@ function drawCardBody(
   }
 
   if (bitmap) {
+    // Clip to the card body so any measure/raster mismatch cannot paint past the shell.
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(x, y + BAR_HEIGHT)
+    ctx.lineTo(x + width, y + BAR_HEIGHT)
+    ctx.lineTo(x + width, y + BAR_HEIGHT + bodyHeight - RADIUS)
+    ctx.quadraticCurveTo(x + width, y + BAR_HEIGHT + bodyHeight, x + width - RADIUS, y + BAR_HEIGHT + bodyHeight)
+    ctx.lineTo(x + RADIUS, y + BAR_HEIGHT + bodyHeight)
+    ctx.quadraticCurveTo(x, y + BAR_HEIGHT + bodyHeight, x, y + BAR_HEIGHT + bodyHeight - RADIUS)
+    ctx.closePath()
+    ctx.clip()
     ctx.drawImage(bitmap.canvas, x, y + BAR_HEIGHT, width, bodyHeight)
+    ctx.restore()
     return
   }
   ctx.fillStyle = '#ffffff'
@@ -479,8 +510,25 @@ export function drawBoard(options: {
 
   const hic = asHtmlInCanvasContext(ctx)
 
+  const metricsFor = (node: BoardNode): CardMetrics => {
+    const base = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
+    const element = elements?.[node.id]
+    if (!element) return base
+    const canvasEl = ctx.canvas as HTMLCanvasElement & {
+      getElementImageDefaultSize?: (el: Element) => { width: number; height: number }
+    }
+    const native = canvasEl.getElementImageDefaultSize?.(element)
+    // Prefer browser default device-pixel height converted back to CSS px so the shell
+    // matches what drawElementImage will paint.
+    const bodyHeight = native
+      ? Math.max(40, Math.round(native.height / scaleY))
+      : liveBodyHeight(element, base.bodyHeight)
+    if (bodyHeight === base.bodyHeight) return base
+    return { width: base.width, bodyHeight, height: BAR_HEIGHT + bodyHeight }
+  }
+
   for (const node of nodes) {
-    const metric = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
+    const metric = metricsFor(node)
     const follow = follows[node.id] ?? { in: false, out: false }
     drawCardShell(ctx, node, metric, editingId === node.id, follow.in, follow.out)
     // Bitmap fallback draws in the current board transform (CSS × scale × zoom).
@@ -493,14 +541,13 @@ export function drawBoard(options: {
   // HTML-in-Canvas bodies need identity transform + canvas-grid destinations.
   if (hic && elements) {
     for (const node of nodes) {
-      const metric = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
+      const metric = metricsFor(node)
       drawCardBody(ctx, node, metric, bitmaps[node.id], elements[node.id], pan, zoom, scaleX, scaleY)
     }
     // Restore board transform for ports and cursors drawn in board space.
     ctx.setTransform(scaleX * zoom, 0, 0, scaleY * zoom, pan.x * scaleX, pan.y * scaleY)
     for (const node of nodes) {
-      const metric = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
-      drawCardPorts(ctx, node, metric)
+      drawCardPorts(ctx, node, metricsFor(node))
     }
   }
 

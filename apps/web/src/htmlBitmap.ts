@@ -140,7 +140,8 @@ export class CardBitmapCache {
     if (pending) return pending
 
     const task = (async () => {
-      const bodyHeight = this.measureBodyHeight(html, width)
+      // Pad a few CSS pixels so font metric differences across OS/DPR cannot clip glyphs.
+      const bodyHeight = this.measureBodyHeight(html, width) + 4
       const canvas = await rasterize(html, width, bodyHeight)
       const entry: CardBitmap = { width, bodyHeight, canvas }
       this.cache.set(key, entry)
