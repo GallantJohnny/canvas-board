@@ -1,3 +1,5 @@
+import { sanitizeHtml } from './sanitizeHtml'
+
 const BODY_CSS = [
   'box-sizing:border-box',
   'margin:0',
@@ -86,7 +88,7 @@ async function rasterize(html: string, width: number, height: number): Promise<H
   if (!ctx) return canvas
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-  const xhtml = toXhtml(html)
+  const xhtml = toXhtml(sanitizeHtml(html))
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
     `<foreignObject width="100%" height="100%">` +
@@ -117,7 +119,7 @@ export class CardBitmapCache {
     const el = document.createElement('div')
     el.className = 'node-body'
     el.setAttribute('style', `${BODY_CSS};width:${width}px`)
-    el.innerHTML = html
+    el.innerHTML = sanitizeHtml(html)
     root.appendChild(el)
     const height = Math.max(40, Math.ceil(Math.max(el.offsetHeight, el.scrollHeight)))
     el.remove()
