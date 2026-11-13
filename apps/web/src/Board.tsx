@@ -114,8 +114,17 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
     const liveIds = new Set(nodesRef.current.map((node) => node.id))
     let changed = false
 
+    const canvas = asHtmlInCanvas(canvasRef.current)
     for (const id of Object.keys(nextSizes)) {
       if (!liveIds.has(id)) {
+        const orphan = cardElementsRef.current[id]
+        if (orphan && canvas) {
+          try {
+            canvas.clearElementGeometry(orphan)
+          } catch {
+            // ignore
+          }
+        }
         delete nextSizes[id]
         delete nextMetrics[id]
         changed = true

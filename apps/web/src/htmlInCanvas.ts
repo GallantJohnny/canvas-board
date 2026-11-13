@@ -19,6 +19,10 @@ export type HtmlInCanvasContext2D = CanvasRenderingContext2D & {
 export type HtmlInCanvasElement = HTMLCanvasElement & {
   requestPaint(): void
   clearElementGeometry(element: Element): void
+  updateElementGeometry?(
+    element: Element,
+    options: { canvasTransform: DOMMatrix; preserveHitTestOrder?: boolean },
+  ): void
 }
 
 export type CanvasPaintEvent = Event & {
@@ -58,4 +62,31 @@ export function asHtmlInCanvas(canvas: HTMLCanvasElement | null): HtmlInCanvasEl
 export function asHtmlInCanvasContext(ctx: CanvasRenderingContext2D | null): HtmlInCanvasContext2D | null {
   if (!ctx || typeof (ctx as HtmlInCanvasContext2D).drawElementImage !== 'function') return null
   return ctx as HtmlInCanvasContext2D
+}
+
+/** Map an element's CSS border box onto the canvas (CSS pixels) for DevTools / a11y / hit geometry. */
+export function syncElementGeometry(
+  canvas: HTMLCanvasElement,
+  element: Element,
+  cssX: number,
+  cssY: number,
+  cssScaleX: number,
+  cssScaleY: number,
+) {
+  const api = asHtmlInCanvas(canvas)
+  if (!api || typeof api.updateElementGeometry !== 'function') return
+  const canvasTransform = new DOMMatrix()
+  canvasTransform.a = cssScaleX
+  canvasTransform.d = cssScaleY
+  canvasTransform.e = cssX
+  canvasTransform.f = cssY
+  try {
+    api.updateElementGeometry(element, {
+      canvasTransform,
+      // Board chrome / other cards keep their stack order; we own pointer routing.
+      preserveHitTestOrder: true,
+    })
+  } catch {
+    // Older builds may lack updateElementGeometry; drawElementImage may still sync.
+  }
 }

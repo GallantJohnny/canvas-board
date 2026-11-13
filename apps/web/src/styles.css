@@ -52,8 +52,9 @@ body {
 }
 
 /* Drawable card bodies are DOM children of the canvas (visible in Elements).
-   content=drawable lays them out but paints only via drawElementImage.
-   preserveElementGeometry keeps them from being moved onto the board for hit-testing. */
+   content=drawable lays them out but paints via drawElementImage; updateElementGeometry
+   aligns DevTools / a11y boxes with the painted cards. pointer-events stay off so the
+   board canvas keeps owning pan/drag hit-testing. */
 .board-canvas > .card-drawable {
   position: absolute;
   left: 0;

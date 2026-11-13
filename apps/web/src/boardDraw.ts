@@ -1,6 +1,6 @@
 import { CARD_WIDTH, anchor, clampCardWidth, curvePoints } from './geometry'
 import type { CardBitmap } from './htmlBitmap'
-import { asHtmlInCanvasContext, getElementImageDefaultSize } from './htmlInCanvas'
+import { asHtmlInCanvasContext, getElementImageDefaultSize, syncElementGeometry } from './htmlInCanvas'
 import type { BoardEdge, BoardNode, DraftLink, Peer, Size } from './types'
 
 export const BAR_HEIGHT = 28
@@ -341,21 +341,25 @@ function drawCardBody(
     ctx.closePath()
     ctx.clip()
     try {
-      // Keep DOM nodes where CSS placed them; board hit-testing stays canvas-owned.
-      hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh, {
-        preserveElementGeometry: true,
-      })
+      // Let geometry sync to the draw (no preserveElementGeometry) so DevTools hover
+      // highlights the painted card, not the CSS box at the canvas origin.
+      hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh)
     } catch {
-      try {
-        hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh)
-      } catch {
-        if (bitmap) ctx.drawImage(bitmap.canvas, topLeft.x, topLeft.y, dw, dh)
-        else {
-          ctx.fillStyle = '#ffffff'
-          ctx.fillRect(topLeft.x, topLeft.y, dw, dh)
-        }
+      if (bitmap) ctx.drawImage(bitmap.canvas, topLeft.x, topLeft.y, dw, dh)
+      else {
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(topLeft.x, topLeft.y, dw, dh)
       }
     }
+    // Explicit CSS-pixel transform: board pan/zoom place the element's border box on the canvas.
+    syncElementGeometry(
+      ctx.canvas,
+      element,
+      pan.x + x * zoom,
+      pan.y + (y + BAR_HEIGHT) * zoom,
+      zoom,
+      zoom,
+    )
     ctx.restore()
     return
   }
