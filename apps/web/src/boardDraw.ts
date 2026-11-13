@@ -1,6 +1,6 @@
 import { CARD_WIDTH, anchor, clampCardWidth, curvePoints } from './geometry'
 import type { CardBitmap } from './htmlBitmap'
-import { asHtmlInCanvasContext } from './htmlInCanvas'
+import { asHtmlInCanvasContext, getElementImageDefaultSize } from './htmlInCanvas'
 import type { BoardEdge, BoardNode, DraftLink, Peer, Size } from './types'
 
 export const BAR_HEIGHT = 28
@@ -319,20 +319,15 @@ function drawCardBody(
   const hic = asHtmlInCanvasContext(ctx)
 
   if (element && hic) {
-    // Identity transform + canvas-grid destinations (Chrome HTML-in-Canvas units).
-    // Destination size is the element's own layout × zoom × scale — never a smaller shell
-    // metric, which would squash lines on top of each other on high-DPR displays.
+    // HTML-in-Canvas: dx/dy/dWidth/dHeight are canvas-grid pixels. Use an identity CTM so
+    // we do not also multiply by the board's DPR scale (that double-scaled text on Retina).
     ctx.save()
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     const topLeft = boardToGrid(pan, zoom, scaleX, scaleY, x, y + BAR_HEIGHT)
-    const canvasEl = ctx.canvas as HTMLCanvasElement & {
-      getElementImageDefaultSize?: (el: Element) => { width: number; height: number }
-    }
-    const native = canvasEl.getElementImageDefaultSize?.(element)
-    const srcW = Math.max(1, element.offsetWidth || width)
+    const native = getElementImageDefaultSize(ctx.canvas, element)
     const srcH = liveBodyHeight(element, bodyHeight)
-    // Prefer the browser's default device-pixel size; fall back to CSS × scale.
-    const dw = (native?.width ?? srcW * scaleX) * zoom
+    // Match the shell: authored CSS width × browser content height (device px via native).
+    const dw = width * scaleX * zoom
     const dh = (native?.height ?? srcH * scaleY) * zoom
     const radiusX = RADIUS * zoom * scaleX
     const radiusY = RADIUS * zoom * scaleY
@@ -346,8 +341,7 @@ function drawCardBody(
     ctx.closePath()
     ctx.clip()
     try {
-      // preserveElementGeometry: do not move the off-screen DOM node onto the card;
-      // board pointer hit-testing stays canvas-owned.
+      // Keep DOM nodes where CSS placed them; board hit-testing stays canvas-owned.
       hic.drawElementImage(element, topLeft.x, topLeft.y, dw, dh, {
         preserveElementGeometry: true,
       })
@@ -514,12 +508,8 @@ export function drawBoard(options: {
     const base = metrics[node.id] ?? cardMetrics(node, sizes[node.id])
     const element = elements?.[node.id]
     if (!element) return base
-    const canvasEl = ctx.canvas as HTMLCanvasElement & {
-      getElementImageDefaultSize?: (el: Element) => { width: number; height: number }
-    }
-    const native = canvasEl.getElementImageDefaultSize?.(element)
-    // Prefer browser default device-pixel height converted back to CSS px so the shell
-    // matches what drawElementImage will paint.
+    const native = getElementImageDefaultSize(ctx.canvas, element)
+    // Keep authored card width; height follows the browser's device-pixel content box.
     const bodyHeight = native
       ? Math.max(40, Math.round(native.height / scaleY))
       : liveBodyHeight(element, base.bodyHeight)

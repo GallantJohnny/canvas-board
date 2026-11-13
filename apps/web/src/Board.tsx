@@ -17,11 +17,7 @@ import type { BoardSnapshot, DraftLink, Peer, Size } from './types'
 import { useBoardSync } from './useBoardSync'
 import { Watermark } from './Watermark'
 
-// Prefer the bitmap rasterizer for card bodies: HTML-in-Canvas default sizes are in
-// device pixels and are easy to double-scale against our board CTM, which overflows or
-// garbles text across DPR differences (Windows vs macOS Retina). Keep detection for a
-// future path, but paint cards through htmlBitmap until that integration is solid.
-const HTML_IN_CANVAS = false && supportsHtmlInCanvas()
+const HTML_IN_CANVAS = supportsHtmlInCanvas()
 
 const STAGGER = 24
 const TAG_ERROR = 'The card has to be defined with HTML tags.'
@@ -770,10 +766,12 @@ export function Board({ initial, name }: { initial: BoardSnapshot; name: string 
         {hintOpen ? (
           <div className="hint" data-chrome>
             <p>
-              Card HTML is measured and painted onto the board canvas so text stays inside each card across display
-              densities. Write HTML in the panel to add a card. Drag a card to move it, the right edge to resize, a port
-              to connect, a line to remove it, and empty space to pan. Use the pencil to edit, and + and − to zoom. Moves,
-              resizes, and edits are shared.
+              {HTML_IN_CANVAS
+                ? 'Card bodies are real HTML inside the canvas (HTML-in-Canvas / drawElementImage), sized in canvas-grid pixels so text fits across display densities.'
+                : 'Card HTML is rasterized onto the canvas when HTML-in-Canvas is unavailable.'}{' '}
+              Write HTML in the panel to add a card. Drag a card to move it, the right edge to resize, a port to connect, a
+              line to remove it, and empty space to pan. Use the pencil to edit, and + and − to zoom. Moves, resizes, and
+              edits are shared.
             </p>
             <button type="button" className="hint-dismiss" aria-label="Dismiss note" onClick={() => setHintOpen(false)}>
               <span aria-hidden="true">×</span>

@@ -26,13 +26,28 @@ export type CanvasPaintEvent = Event & {
 }
 
 export function supportsHtmlInCanvas(): boolean {
-  return (
-    typeof HTMLCanvasElement !== 'undefined' &&
-    'content' in HTMLCanvasElement.prototype &&
-    typeof CanvasRenderingContext2D !== 'undefined' &&
-    typeof (CanvasRenderingContext2D.prototype as { drawElementImage?: unknown }).drawElementImage ===
-      'function'
-  )
+  if (typeof document === 'undefined' || typeof HTMLCanvasElement === 'undefined') return false
+  const canvas = document.createElement('canvas')
+  canvas.setAttribute('content', 'drawable')
+  // Chrome sets the reflected content property when the HTML-in-Canvas API is available.
+  return (canvas as HTMLCanvasElement & { content?: string }).content === 'drawable'
+}
+
+export type ElementImageSize = { width: number; height: number }
+
+export function getElementImageDefaultSize(
+  canvas: HTMLCanvasElement,
+  element: Element,
+): ElementImageSize | null {
+  const api = canvas as HTMLCanvasElement & {
+    getElementImageDefaultSize?: (el: Element) => ElementImageSize
+  }
+  if (typeof api.getElementImageDefaultSize !== 'function') return null
+  try {
+    return api.getElementImageDefaultSize(element)
+  } catch {
+    return null
+  }
 }
 
 export function asHtmlInCanvas(canvas: HTMLCanvasElement | null): HtmlInCanvasElement | null {

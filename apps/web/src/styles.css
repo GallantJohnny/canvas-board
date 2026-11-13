@@ -51,13 +51,12 @@ body {
   touch-action: none;
 }
 
-/* Drawable card bodies live as canvas children for HTML-in-Canvas.
-   Layout still runs so offsetHeight is real; paint goes through drawElementImage.
-   Keep them off-screen so auto geometry sync cannot composite the live DOM on top of
-   the canvas draw (that double-paints and looks like garbled overlapping text). */
+/* Drawable card bodies are DOM children of the canvas (visible in Elements).
+   content=drawable lays them out but paints only via drawElementImage.
+   preserveElementGeometry keeps them from being moved onto the board for hit-testing. */
 .board-canvas > .card-drawable {
   position: absolute;
-  left: -10000px;
+  left: 0;
   top: 0;
   pointer-events: none;
   box-sizing: border-box;
