@@ -114,12 +114,11 @@ function socketUrl() {
   return `${protocol}//${window.location.host}/api/board/live`
 }
 
-export function useBoardSync(initial: BoardSnapshot, name: string, options?: { offline?: boolean }) {
-  const offline = options?.offline === true
+export function useBoardSync(initial: BoardSnapshot, name: string) {
   const [nodes, setNodes] = useState<BoardNode[]>(initial.nodes)
   const [edges, setEdges] = useState<BoardEdge[]>(initial.edges)
   const [peers, setPeers] = useState<Peer[]>([])
-  const [status, setStatus] = useState<LiveStatus>(offline ? 'live' : 'connecting')
+  const [status, setStatus] = useState<LiveStatus>('connecting')
   const boardRef = useRef<Board>({ nodes: initial.nodes, edges: initial.edges })
   const revision = useRef(initial.revision)
   const dragging = useRef<string | null>(null)
@@ -178,10 +177,6 @@ export function useBoardSync(initial: BoardSnapshot, name: string, options?: { o
 
   function sendOp(op: BoardOp): string | null {
     const opId = crypto.randomUUID()
-    if (offline) {
-      revision.current += 1
-      return opId
-    }
     pending.current.add(opId)
     const socket = socketRef.current
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -244,11 +239,6 @@ export function useBoardSync(initial: BoardSnapshot, name: string, options?: { o
   resendHeldRef.current = resendHeld
 
   useEffect(() => {
-    if (offline) {
-      setStatus('live')
-      return
-    }
-
     let stopped = false
     let socket: WebSocket | null = null
     let reconnectTimer = 0
@@ -392,7 +382,7 @@ export function useBoardSync(initial: BoardSnapshot, name: string, options?: { o
       window.clearInterval(heartbeatTimer)
       socket?.close()
     }
-  }, [me, offline])
+  }, [me])
 
   function mutate(op: BoardOp) {
     const next = applyOp(boardRef.current, op)
