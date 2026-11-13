@@ -782,3 +782,116 @@ body {
 .status button:hover {
   background: var(--blue-dark);
 }
+
+.bench-hud {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 30;
+  width: min(360px, calc(100% - 24px));
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(27, 40, 51, 0.92);
+  color: #f4f7fb;
+  font: 12px/1.35 "Segoe UI", system-ui, sans-serif;
+  pointer-events: auto;
+}
+
+.bench-hud-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.bench-hud-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 8px;
+  margin: 0 0 8px;
+}
+
+.bench-hud-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bench-hud-stats dt {
+  margin: 0;
+  color: #9eb0c0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bench-hud-stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bench-hud-section {
+  margin-bottom: 8px;
+}
+
+.bench-hud-label {
+  margin: 0 0 4px;
+  color: #9eb0c0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bench-hud-load {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.bench-hud-actions,
+.bench-hud-export {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.bench-hud button,
+.bench-hud select {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: #3a5166;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.bench-hud button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.bench-hud button:hover:not(:disabled) {
+  background: #4a657d;
+}
+
+.bench-hud-export label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bench-hud-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 120px;
+  overflow: auto;
+  color: #d5e0ea;
+  font-variant-numeric: tabular-nums;
+}
